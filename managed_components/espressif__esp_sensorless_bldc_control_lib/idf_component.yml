@@ -1,9 +1,0 @@
-dependencies:
-  idf:
-    version: '>=5.0'
-description: ESP32 Sensorless BLDC Control Lib
-files:
-  exclude:
-  - '*.c'
-  - '**/build*/**/*'
-version: 0.1.0~3
