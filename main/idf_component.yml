@@ -17,3 +17,6 @@ dependencies:
   # espressif/esp_sensorless_bldc_control: '*'
   espressif/esp_sensorless_bldc_control_lib: '*'
   espressif/pid_ctrl: '*'
+  esp_pp_idf:
+    git: 'https://github.com/abitmeh/esp-idf.git'
+    version: main

@@ -1,4 +1,12 @@
 dependencies:
+  esp_pp_idf:
+    component_hash: c1063f65a1e22f2bd12473f5a17c3e69412478c19b37f7c1068c4b45e939ff1c
+    dependencies: []
+    source:
+      git: https://github.com/abitmeh/esp-idf.git
+      path: .
+      type: git
+    version: 5e38552d23bcf0e3ac1d7aea0c5bb6bc06bbbc75
   espressif/esp_sensorless_bldc_control_lib:
     component_hash: c8ff764921dc2582efc076b06a299b4464e6b012339bce7c2c962327015547dc
     dependencies:
@@ -24,9 +32,10 @@ dependencies:
       type: idf
     version: 5.5.0
 direct_dependencies:
+- esp_pp_idf
 - espressif/esp_sensorless_bldc_control_lib
 - espressif/pid_ctrl
 - idf
-manifest_hash: a3b3f2ab93e3e3fb8b996cdf2613c47b2da00661252776f7d4b49e75cbedf19a
+manifest_hash: 01fc0e2eafca9ad668d7535e9b08baea7bfe8f593f6442b31f9cc1deb08ec75e
 target: esp32s3
 version: 2.0.0
