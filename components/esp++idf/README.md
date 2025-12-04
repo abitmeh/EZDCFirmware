@@ -1,0 +1,2 @@
+# ESP++IDF
+A C++ wrapper for ESP-IDF.  Why does it contain the things that it does, and not the things that it doesn't?  Because I needed these things and I didn't yet need those other things.  If you want to use this and something is missing, tell me what you want added, or send a patch.
