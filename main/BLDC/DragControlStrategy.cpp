@@ -29,7 +29,8 @@ NextChange DragControlStrategy::nextStepChange() {
 }
 
 uint16_t DragControlStrategy::_nextStepLength() {
-    return kDragPeriodAtRampStart + ((int32_t)kDragPeriodAtRampEnd - (int32_t)kDragPeriodAtRampStart) * _proportionThroughDrag;
+    const uint32_t rpm = kDragRPMAtRampStart + ((int32_t)kDragRPMAtRampEnd - (int32_t)kDragRPMAtRampStart) * _proportionThroughDrag;
+    return kADCRpmCalculationCoefficient / rpm;
 }
 
 uint32_t DragControlStrategy::dutyCycle() const {

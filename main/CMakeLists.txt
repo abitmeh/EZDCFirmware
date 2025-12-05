@@ -1,3 +1,6 @@
-idf_component_register(SRCS "BLDC/PulseInjectionControlStrategy.cpp" "BLDC/McpwmContext.cpp" "main.cpp" "BLDC/AlignmentControlStrategy.cpp" "BLDC/DragControlStrategy.cpp" "BLDC/HaltControlStrategy.cpp" "BLDC/Motor.cpp" "BLDC/MotorController.cpp" "BLDC/SensorlessControlStrategy.cpp" "BLDC/MotorControlStrategy.cpp"
+file(GLOB_RECURSE SRC "*.cpp")
+
+idf_component_register(SRCS ${SRC}
                        INCLUDE_DIRS ".")
+
 target_compile_options(${COMPONENT_LIB} PRIVATE -std=gnu++23)

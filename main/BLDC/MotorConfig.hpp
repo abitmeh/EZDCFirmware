@@ -69,16 +69,17 @@ static constexpr size_t kAlignmentTimeMs = 300; /*!< Duration of alignment, too 
 static constexpr size_t kAlignmentDutyCycle = k20PercentDutyCycle; /*!< alignment torque. */
 
 /**
- * @brief Setting parameters for strong dragging. The principle of
- *        strong dragging is to increase the control frequency and intensity
- * @note  If the control cycle speeds up, corresponding reductions
- *        should be made to the RAMP_TIM_STA, RAMP_TIM_END, RAMP_TIM_STEP
+ * @brief Parameters for dragging the motor up to speed initially
+ *        We start at kDragRPMAtRampStart, and linearly increase speed
+ *        at the same time we start the duty cycle at kDragDutyCycleAtRampStart
+ *        and ramp it correspondingly to kDragDutyCycleAtRampEnd
  */
-static constexpr size_t kDragPeriodAtRampStart = 600;
-static constexpr size_t kDragPeriodAtRampEnd = 20;
-static constexpr size_t kDragDutyCycleAtRampStart = k10PercentDutyCycle;
-static constexpr size_t kDragDutyCycleAtRampEnd = k25PercentDutyCycle;
-static constexpr size_t kDragDuration = 40'000;
+static constexpr size_t kDragRPMAtRampStart = 200;
+static constexpr size_t kDragRPMAtRampEnd = 2200;
+static constexpr size_t kDragDutyCycleAtRampStart = dutyCyclePeriod(0.11);
+static constexpr size_t kDragDutyCycleAtRampEnd = dutyCyclePeriod(0.60);
+static constexpr size_t kDragDuration = 50'000;
+static constexpr size_t kDragHoldDuration = 10'000;
 
 /**
  * @brief ADC parameters for zero-crossing detection; please do not delete if not in use.
@@ -97,7 +98,7 @@ static constexpr size_t kZeroCrossAdvance = 8;
  * @brief Motor parameter settings.
  *
  */
-static constexpr size_t kPolePairCount = 2;
+static constexpr size_t kPolePairCount = 6;
 
 /**
  * @brief Closed-loop PID parameters for speed.

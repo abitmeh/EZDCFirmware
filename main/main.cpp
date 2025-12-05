@@ -102,7 +102,7 @@ void app_main(void) {
     ESP_ERROR_CHECK_WITHOUT_ABORT(err);
 
     controller.setDirection(Clockwise);
-    controller.start(3000, err);
+    controller.start(2000, err);
     ESP_ERROR_CHECK_WITHOUT_ABORT(err);
 
     while (1) {
