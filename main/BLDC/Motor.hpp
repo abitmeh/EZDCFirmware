@@ -15,6 +15,7 @@
 #include "BLDC/Types.hpp"
 
 #include <array>
+#include <deque>
 #include <functional>
 #include <memory>
 
@@ -67,8 +68,6 @@ namespace bldc {
 
         uint32_t timeInCurrentStep() const { return _speed.timeInCurrentStep; }
 
-        void setTimeInCurrentStep(uint32_t t) { _speed.timeInCurrentStep = t; }
-
         void setNextStep(MotorStep step) { _nextStep = step; }
 
         void setInPulseInjectionPhase(bool pulseInjection) { _inPulseInjectionPhase = pulseInjection; }
@@ -76,6 +75,7 @@ namespace bldc {
         MotorPhase highImpedencePhase() const { return _highImpedencePhase; }
 
         void tick();
+        void calculateSpeed();
         void turnIfNecessary();
 
     private:
@@ -120,14 +120,15 @@ namespace bldc {
         Direction _direction = Clockwise;
         MotorStep _nextStep = Step0;
         MotorStep _currentStep = Step0;
+        MotorStep _stepInPreviousTick = Step0;
+        std::deque<uint32_t> _stepDurations;
         MotorPhase _highImpedencePhase = U;
         bool _phaseChangeComplete = true;
         uint16_t _dutyCycle = 0;
         Speed _speed;
-        bool _speedCalculatedThisRevolution = false;
         bool _inPulseInjectionPhase = false;
 
-        static constexpr uint16_t kStallPeriod = 15000;
+        static constexpr uint16_t kStallPeriod = 15'000;
         static constexpr char _loggingTag[] = "bldc::Motor";
     };
 }  // namespace bldc

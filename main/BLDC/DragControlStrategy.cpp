@@ -22,7 +22,6 @@ DragControlStrategy::DragControlStrategy(Motor& motor, esp_err_t& err) : MotorCo
 
 NextChange DragControlStrategy::nextStepChange() {
     const uint16_t nextPhaseLength = _nextStepLength();
-    _motor.setTimeInCurrentStep(0);
     _timeInDrag += nextPhaseLength;
     _proportionThroughDrag = static_cast<float>(_timeInDrag) / kDragDuration;
     return NextChange(NextStep(nextPhaseLength, static_cast<MotorStep>((_motor.currentStep() + 1) % 6)));

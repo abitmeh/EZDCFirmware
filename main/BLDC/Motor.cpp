@@ -44,23 +44,51 @@ bool Motor::isStalled() const {
 void Motor::tick() {
     _speed.timeInCurrentStep++;
 
-    if (_currentStep == MotorStep::Step0) {
-        if (!_speedCalculatedThisRevolution) {
-            _speedCalculatedThisRevolution = true;
-            if (_speed.timeInCurrentStep >= kInvalidSpeedCalculationSkipLimit) {
-                const uint32_t instantaneousRPM = _speed.instantaneousRPM();
-                _speed.currentRPM = 0.8 * _speed.currentRPM + 0.2 * instantaneousRPM;
-                ESP_LOGD(_loggingTag, "RPM: %lu (%lu), (us per phase: %lu)\n", _speed.currentRPM, instantaneousRPM, _speed.timeInCurrentStep);
+    calculateSpeed();
+}
+
+void Motor::calculateSpeed() {
+    if (_inPulseInjectionPhase) {
+        return;
+    }
+
+    if (_currentStep != _stepInPreviousTick) {
+        _stepInPreviousTick = _currentStep;
+        _stepDurations.push_front(_speed.timeInCurrentStep);
+        _speed.timeInCurrentStep = 0;
+    }
+
+    if (_stepDurations.empty()) {
+        _speed.currentRPM = 0;
+        return;
+    }
+
+    uint32_t totalDuration = 0;
+    for (auto iter = _stepDurations.begin(); iter != _stepDurations.end(); ++iter) {
+        totalDuration += *iter;
+        if (totalDuration >= kSpeedAveragingDuration) {
+            _stepDurations.erase(iter, _stepDurations.end());
+            break;
+        }
+    }
+
+    uint32_t averageDuration = totalDuration / _stepDurations.size();
+    if (averageDuration == 0) {
+        return;
+    }
+    if (_speed.timeInCurrentStep > averageDuration) {
+        uint32_t totalDuration = _speed.timeInCurrentStep;
+        for (auto iter = _stepDurations.begin(); iter != _stepDurations.end(); ++iter) {
+            totalDuration += *iter;
+            if (totalDuration >= kSpeedAveragingDuration) {
+                _stepDurations.erase(iter, _stepDurations.end());
+                break;
             }
         }
-    } else {
-        uint32_t expectedTicksPerStep = _speed.currentRPM * kADCRpmCalculationCoefficient;
-        if (_speed.timeInCurrentStep > expectedTicksPerStep) {
-            const uint32_t instantaneousRPM = _speed.instantaneousRPM();
-            _speed.currentRPM = 0.8 * _speed.currentRPM + 0.2 * instantaneousRPM;
-        }
-        _speedCalculatedThisRevolution = true;
+        averageDuration = totalDuration / (_stepDurations.size() + 1);
     }
+
+    _speed.currentRPM = kADCRpmCalculationCoefficient / averageDuration;
 }
 
 void Motor::turnIfNecessary() {

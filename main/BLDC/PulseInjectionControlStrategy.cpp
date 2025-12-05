@@ -21,9 +21,11 @@ using namespace esp;
 
 PulseInjectionControlStrategy::PulseInjectionControlStrategy(Motor& motor) : MotorControlStrategy(motor) {}
 
-NextChange PulseInjectionControlStrategy::nextStepChange() {
+void PulseInjectionControlStrategy::start(esp_err_t& err) {
     _motor.setInPulseInjectionPhase(true);
+}
 
+NextChange PulseInjectionControlStrategy::nextStepChange() {
     if (_phase == Cleanup) {
         _motor.setAllHighZ();
         const MotorStep nextStep = static_cast<MotorStep>(inject_get_phase(_adcValues.data()));

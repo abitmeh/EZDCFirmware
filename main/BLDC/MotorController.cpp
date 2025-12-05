@@ -60,9 +60,6 @@ MotorController::MotorController(const MotorControlConfig& config, esp_err_t& er
         return;
     }
 
-    MotorConfig motorConfig = config.motorConfig;
-    motorConfig.inputSwitchConfig._callbacks = _mcpwmTimerEventCallbacks;
-
     _mcpwmTimerEventCallbacks = config.motorConfig.inputSwitchConfig._callbacks;
     _mcpwmTimerEventCallbacks.onFull = [this, config] IRAM_ATTR(const mcpwm_timer_event_data_t& eventData) -> bool {
         if (_controllers[_controlPhase] != nullptr) {
@@ -75,6 +72,8 @@ MotorController::MotorController(const MotorControlConfig& config, esp_err_t& er
             return false;
         }
     };
+    MotorConfig motorConfig = config.motorConfig;
+    motorConfig.inputSwitchConfig._callbacks = _mcpwmTimerEventCallbacks;
 
     _motor = std::make_shared<Motor>(motorConfig, err);
     if (err != ESP_OK) {

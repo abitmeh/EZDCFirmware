@@ -28,6 +28,8 @@ namespace bldc {
     public:
         PulseInjectionControlStrategy(Motor& motor);
 
+        virtual void start(esp_err_t& err) override;
+
         virtual NextChange nextStepChange() override;
 
         virtual uint32_t dutyCycle() const override;

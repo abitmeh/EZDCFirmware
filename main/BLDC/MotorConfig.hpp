@@ -76,7 +76,7 @@ static constexpr size_t kAlignmentDutyCycle = k20PercentDutyCycle; /*!< alignmen
  */
 static constexpr size_t kDragRPMAtRampStart = 200;
 static constexpr size_t kDragRPMAtRampEnd = 2200;
-static constexpr size_t kDragDutyCycleAtRampStart = dutyCyclePeriod(0.11);
+static constexpr size_t kDragDutyCycleAtRampStart = dutyCyclePeriod(0.15);
 static constexpr size_t kDragDutyCycleAtRampEnd = dutyCyclePeriod(0.60);
 static constexpr size_t kDragDuration = 50'000;
 static constexpr size_t kDragHoldDuration = 10'000;
@@ -85,7 +85,7 @@ static constexpr size_t kDragHoldDuration = 10'000;
  * @brief ADC parameters for zero-crossing detection; please do not delete if not in use.
  *
  */
-static constexpr size_t kZeroCrossRepeatTime = 2;
+static constexpr size_t kZeroCrossRepeatTime = 1;
 static constexpr size_t kZeroCrossAvoidContinuousCurrentTime = 4;
 
 /**
@@ -115,15 +115,14 @@ static constexpr pid_calculate_type_t kSpeedCalculationType = PID_CAL_TYPE_INCRE
 
 /**
  * @brief Speed parameter settings.
- *
+ * 
  */
 static constexpr size_t kMaxRpm = 10'000;
 static constexpr size_t kMinRpm = 0;
 static constexpr float kMaxSpeedMeasurementFactor = 1.2;
+static constexpr uint32_t kSpeedAveragingDuration = 1000;
 
 static constexpr float kADCRpmCalculationCoefficient = 60.0f * (1'000'000 / kAlarmCountMicroseconds) / (static_cast<float>(kPolePairCount));
-
-static constexpr size_t kInvalidSpeedCalculationSkipLimit = static_cast<size_t>(kADCRpmCalculationCoefficient / (2 * kMaxRpm * kMaxSpeedMeasurementFactor));
 
 static constexpr pid_ctrl_config_t kPidControlConfig = {.init_param = {
                                                             .kp = kPidKp,
