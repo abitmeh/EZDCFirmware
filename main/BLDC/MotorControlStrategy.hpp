@@ -10,7 +10,7 @@
 
 #include "Motor.hpp"
 
-#include "ADC.hpp"
+#include "ADCOneshot.hpp"
 
 #include <array>
 #include <optional>

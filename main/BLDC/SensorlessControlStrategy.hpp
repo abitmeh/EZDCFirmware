@@ -14,7 +14,7 @@
 #include "BLDC/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
-#include "ADC.hpp"
+#include "ADCOneshot.hpp"
 
 #include <array>
 #include <optional>
@@ -45,7 +45,7 @@ namespace bldc {
     private:
         std::optional<uint16_t> _completePhase();
 
-        std::array<esp::ADCOneshotChannelPtr, 3> _adcs;
+        std::array<esp::ADCOneshotChannelPtr<esp::Calibrated>, 3> _adcs;
 
         pid_ctrl_block_handle_t _pid;
 

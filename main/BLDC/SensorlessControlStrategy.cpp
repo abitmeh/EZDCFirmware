@@ -23,13 +23,20 @@ using namespace esp;
 
 SensorlessControlStrategy::SensorlessControlStrategy(const SensorlessControlConfig& adcConfig, Motor& motor, esp_err_t& err) : MotorControlStrategy(motor) {
     for (auto [i, channelConfig] : adcConfig | std::views::enumerate) {
-        ADCOneshotPtr adcUnit = ESP32::sharedESP32()->adcOneshot(channelConfig.first, err);
+        ADCCalibrationPtr calibration =
+            std::make_shared<ADCCalibration>(channelConfig.first, channelConfig.second.configuration.atten, channelConfig.second.configuration.bitwidth, err);
+        if (calibration == nullptr || err != ESP_OK) {
+            ESP_LOGE(_loggingTag, "ADCCalibration creation failed: %s", esp_err_to_name(err));
+            return;
+        }
+
+        ADCOneshotPtr<Calibrated> adcUnit = ESP32::sharedESP32()->adcOneshot(calibration, err);
         if (adcUnit == nullptr || err != ESP_OK) {
             ESP_LOGE(_loggingTag, "ADCOneshot creation failed: %s", esp_err_to_name(err));
             return;
         }
 
-        ADCOneshotChannelPtr adcChannel = adcUnit->channel(channelConfig.second, err);
+        ADCOneshotChannelPtr<Calibrated> adcChannel = adcUnit->channel(channelConfig.second.channel, err);
         if (adcChannel == nullptr || err != ESP_OK) {
             ESP_LOGE(_loggingTag, "adcChannel creation failed: %s", esp_err_to_name(err));
             return;
@@ -46,8 +53,8 @@ SensorlessControlStrategy::SensorlessControlStrategy(const SensorlessControlConf
 }
 
 void IRAM_ATTR SensorlessControlStrategy::mcpwmTimerFull() {
-    _adcValues[1] = 1700;
-    _adcValues[0] = _adcs[_motor.highImpedencePhase()]->readIsr();
+    _adcValues[1] = 1400;
+    _adcValues[0] = miliVoltsIsr(_adcs[_motor.highImpedencePhase()].get());
     if (_adcValues[0] > _maxObservedValue) {
         _maxObservedValue = _adcValues[0];
     }
