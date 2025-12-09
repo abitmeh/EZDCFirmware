@@ -92,9 +92,7 @@ McpwmContext::McpwmContext(const McpwmConfig& config, esp_err_t& err) {
 
     const GPIOFaultConfig faultConfig = {.groupId = config._groupId,
                                          .gpioNum = config._faultGpio,
-                                         .activeHigh = !config._faultInverted,
-                                         .pullUp = config._faultInverted,
-                                         .pullDown = !config._faultInverted};
+                                         .activeHigh = !config._faultInverted};
     _faultHandle = ESP32::sharedESP32()->mcpwm().gpioFault(faultConfig, err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "MCPWM::gpioFault failed: %s", esp_err_to_name(err));
