@@ -26,11 +26,13 @@ namespace bldc {
 
     class HaltControlStrategy : public MotorControlStrategy {
     public:
-        HaltControlStrategy(Motor& motor);
+        HaltControlStrategy(MotorPtr& motor);
+
+        virtual void start(esp_err_t&) override;
 
         virtual NextChange nextStepChange() override;
 
-        virtual uint32_t dutyCycle() const override;
+        virtual float dutyCycle() const override;
 
         virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
 

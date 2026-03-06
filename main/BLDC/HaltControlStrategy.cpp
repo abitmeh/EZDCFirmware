@@ -15,16 +15,20 @@
 
 using namespace bldc;
 
-HaltControlStrategy::HaltControlStrategy(Motor& motor) : MotorControlStrategy(motor) {}
+HaltControlStrategy::HaltControlStrategy(MotorPtr& motor) : MotorControlStrategy(motor) {}
+
+void HaltControlStrategy::start(esp_err_t& err) {
+    ESP_LOGD(_loggingTag, "Starting HaltControlStrategy");
+}
 
 NextChange HaltControlStrategy::nextStepChange() {
-    _motor.setTargetRPM(0);
-    _motor.setAllHighZ();
+    _motor->setTargetRPM(0);
+    _motor->setAllHighZ();
     return NextChange();
 }
 
-uint32_t HaltControlStrategy::dutyCycle() const {
-    return 0;
+float HaltControlStrategy::dutyCycle() const {
+    return 0.0f;
 }
 
 std::optional<ControlPhase> HaltControlStrategy::nextControlPhase(ControlPhase controlPhase) const {

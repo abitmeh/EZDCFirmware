@@ -26,17 +26,15 @@ namespace bldc {
 
     class PulseInjectionControlStrategy : public MotorControlStrategy {
     public:
-        PulseInjectionControlStrategy(Motor& motor);
+        PulseInjectionControlStrategy(MotorPtr& motor);
 
         virtual void start(esp_err_t& err) override;
 
         virtual NextChange nextStepChange() override;
 
-        virtual uint32_t dutyCycle() const override;
+        virtual float dutyCycle() const override;
 
         virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
-
-        virtual void mcpwmTimerFull() override;
 
     private:
         enum PulseInjectionPhase {

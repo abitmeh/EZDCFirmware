@@ -10,7 +10,7 @@
 
 #include "Motor.hpp"
 
-#include "ADCOneshot.hpp"
+#include "ADC/Continuous.hpp"
 
 #include <array>
 #include <optional>
@@ -27,20 +27,19 @@ namespace bldc {
 
     class MotorControlStrategy {
     public:
-        MotorControlStrategy(Motor& motor) : _motor(motor) {}
-
-        virtual void mcpwmTimerFull() {}
+        MotorControlStrategy(MotorPtr& motor) : _motor(motor) {}
 
         virtual void start(esp_err_t&) {}
+        virtual void stop(esp_err_t&) {}
 
         virtual NextChange nextStepChange() = 0;
 
-        virtual uint32_t dutyCycle() const = 0;
+        virtual float dutyCycle() const = 0;
 
         virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const { return std::optional<ControlPhase>(); }
 
     protected:
-        Motor& _motor;
+        MotorPtr _motor;
 
     private:
         static constexpr char _loggingTag[] = "bldc::MotorControlStrategy";

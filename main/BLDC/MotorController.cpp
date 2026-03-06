@@ -16,6 +16,7 @@
 #include "BLDC/MotorConfig.hpp"
 #include "BLDC/PulseInjectionControlStrategy.hpp"
 #include "BLDC/SensorlessControlStrategy.hpp"
+#include "Utilities/Tracer.hpp"
 
 #include "ESP32.hpp"
 
@@ -29,6 +30,13 @@ namespace bldc {
         MotorController* motorController = reinterpret_cast<MotorController*>(userInfo);
         motorController->_controlTask();
     }
+
+    InterruptResult _timerCallback(GPTimer& timer, const gptimer_alarm_event_data_t& eventData, void* userInfo) {
+        MotorController* motorController = reinterpret_cast<MotorController*>(userInfo);
+        BaseType_t higherPriorityTaskWoken = pdFALSE;
+        xSemaphoreGiveFromISR(motorController->_timerFiredSemaphore, &higherPriorityTaskWoken);
+        return higherPriorityTaskWoken ? InterruptResult::HighPriorityTaskWoken : InterruptResult::NoHighPriorityTaskWoken;
+    }
 }  // namespace bldc
 
 MotorController::MotorController(const MotorControlConfig& config, esp_err_t& err) {
@@ -41,14 +49,10 @@ MotorController::MotorController(const MotorControlConfig& config, esp_err_t& er
     }
 
     // Init gptimer
-    GPTimerConfig timerConfig = {.durationMicroseconds = kAlarmCountMicroseconds,
-                                 .callback = [this] IRAM_ATTR(GPTimer & timer, const gptimer_alarm_event_data_t& eventData) -> bool {
-                                     BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-                                     xSemaphoreGiveFromISR(_timerFiredSemaphore, &xHigherPriorityTaskWoken);
-                                     return xHigherPriorityTaskWoken;
-                                 }};
+    GPTimerConfig timerConfig = {.durationMicroseconds = kTickUs,
+                                 .callback = bldc::_timerCallback };
 
-    _timer = std::make_shared<GPTimer>(timerConfig, err);
+    _timer = std::make_shared<GPTimer>(timerConfig, this, err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "GPIO construction failed: %s", esp_err_to_name(err));
         return;
@@ -60,44 +64,42 @@ MotorController::MotorController(const MotorControlConfig& config, esp_err_t& er
         return;
     }
 
-    _mcpwmTimerEventCallbacks = config.motorConfig.inputSwitchConfig._callbacks;
-    _mcpwmTimerEventCallbacks.onFull = [this, config] IRAM_ATTR(const mcpwm_timer_event_data_t& eventData) -> bool {
-        if (_controllers[_controlPhase] != nullptr) {
-            _controllers[_controlPhase]->mcpwmTimerFull();
-        }
-
-        if (config.motorConfig.inputSwitchConfig._callbacks.onFull) {
-            return config.motorConfig.inputSwitchConfig._callbacks.onFull(eventData);
-        } else {
-            return false;
-        }
-    };
-    MotorConfig motorConfig = config.motorConfig;
-    motorConfig.inputSwitchConfig._callbacks = _mcpwmTimerEventCallbacks;
-
-    _motor = std::make_shared<Motor>(motorConfig, err);
+    _motor = std::make_shared<Motor>(config.motorConfig, err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "Motor::Motor failed: %s", err);
         return;
     }
 
-    HaltControlStrategyPtr haltControlStrategy = std::make_shared<HaltControlStrategy>(*_motor);
-    _controllers = {
-        std::make_shared<PulseInjectionControlStrategy>(*_motor),                                   // Pulse Injection
-        std::make_shared<AlignmentControlStrategy>(*_motor),                                        // Alignment
-        std::make_shared<DragControlStrategy>(*_motor, err),                                        // Drag
-        std::make_shared<SensorlessControlStrategy>(config.sensorlessControlConfig, *_motor, err),  // Closed Loop
-        haltControlStrategy,                                                                        // Stalled
-        haltControlStrategy,                                                                        // Stopped
-        haltControlStrategy,                                                                        // Fault
-    };
-
+    DragControlStrategyPtr dragControlStrategy = std::make_shared<DragControlStrategy>(_motor, err);
     if (err != ESP_OK) {
-        ESP_LOGE(_loggingTag, "ZeroCrossingDetector construction failed: %s", err);
+        ESP_LOGE(_loggingTag, "DragControlStrategy construction failed: %s", esp_err_to_name(err));
         return;
     }
 
-    xTaskCreate(bldc::_controlTask, "BLDC Motor Controller", 1024 * 4, this, 10, NULL);
+    SensorlessControlStrategyPtr sensorlessControlStrategy = std::make_shared<SensorlessControlStrategy>(_motor, err);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "SensorlessControlStrategy construction failed: %s", esp_err_to_name(err));
+        return;
+    }
+
+    sensorlessControlStrategy->setPIDParameters(kPidControlConfig.init_param, err);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "SensorlessControlStrategy::setPIDParameters failed: %s", esp_err_to_name(err));
+        return;
+    }
+    HaltControlStrategyPtr haltControlStrategy = std::make_shared<HaltControlStrategy>(_motor);
+
+    _controllers = {
+        std::make_shared<PulseInjectionControlStrategy>(_motor),  // Pulse Injection
+        std::make_shared<AlignmentControlStrategy>(_motor),       // Alignment
+        dragControlStrategy,       // Drag
+        sensorlessControlStrategy, // Closed Loop
+        haltControlStrategy,                                       // Stalled
+        haltControlStrategy,                                       // Stopped
+        haltControlStrategy,                                       // Fault
+    };
+
+    xTaskCreate(bldc::_controlTask, "BLDC Motor Controller", 1024 * 4, this, tskIDLE_PRIORITY + 4, NULL);
 }
 
 MotorController::~MotorController() {
@@ -111,7 +113,7 @@ void MotorController::start(uint32_t targetRPM, esp_err_t& err) {
         return setTargetRPM(targetRPM);
     }
 
-    _sleepGPIO->setLevel(!_sleepValue, err);
+    _sleepGPIO->setLevel(esp::Level(!_sleepValue), err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "GPIO::setLevel failed: %s", esp_err_to_name(err));
         return;
@@ -143,7 +145,7 @@ void MotorController::stop(esp_err_t& err) {
 
     _motor->stop();
 
-    _sleepGPIO->setLevel(_sleepValue, err);
+    _sleepGPIO->setLevel(esp::Level(_sleepValue), err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "GPIO::setLevel failed: %s", esp_err_to_name(err));
         err = ESP_FAIL;
@@ -151,6 +153,10 @@ void MotorController::stop(esp_err_t& err) {
     }
 
     _running = false;
+}
+
+void MotorController::configureMotorFaultHandling(gpio_num_t gpio, bool inverted, esp::mcpwm::GPIOFault::Callback callback) {
+    _motor->configureFaultHandling(gpio, inverted, callback);
 }
 
 Direction MotorController::direction() const {
@@ -161,12 +167,8 @@ void MotorController::setDirection(Direction direction) {
     _motor->setDirection(direction);
 }
 
-uint32_t MotorController::dutyCycle() const {
-    return _motor->dutyCycle();
-}
-
-void MotorController::setDutyCycle(uint32_t dutyCycle) {
-    _motor->setDutyCycle(dutyCycle);
+float MotorController::dutyCycle() const {
+    return static_cast<float>(_motor->dutyCycle()) / static_cast<float>(kMaxDutyCycle);
 }
 
 uint32_t MotorController::rpm() const {
@@ -190,12 +192,17 @@ void MotorController::_controlTask() {
 }
 
 void MotorController::_setControlPhase(ControlPhase phase, esp_err_t& err) {
-    ESP_LOGD(_loggingTag, "Entering control phase: %s", to_string(phase).c_str());
+    _controllers[_controlPhase]->stop(err);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "MotorController::stop() failed: %s", esp_err_to_name(err));
+        return;
+    }
     _controlPhase = phase;
+    _motor->setControlPhase(phase);
     if (_controllers[phase] != nullptr) {
         _controllers[phase]->start(err);
         if (err != ESP_OK) {
-            ESP_LOGE(_loggingTag, "PhaseChangeTimer::start() failed: %s", esp_err_to_name(err));
+            ESP_LOGE(_loggingTag, "MotorController::start() failed: %s", esp_err_to_name(err));
             return;
         }
     }
@@ -227,29 +234,50 @@ void MotorController::_tick() {
         ESP_LOGE(_loggingTag, "MotorController::_checkForStall failed: %s", esp_err_to_name(err));
         return;
     }
-    if (!stalled && _timeToNextStep.has_value() && _timeToNextStep.value() == 0) {
-        _motor->turnIfNecessary();
-        _timeToNextStep = std::optional<uint32_t>();
+    if (stalled) {
+        std::optional<ControlPhase> nextControlPhase = controller->nextControlPhase(_controlPhase);
+        if (nextControlPhase.has_value()) {
+            _setControlPhase(nextControlPhase.value(), err);
+            if (err != ESP_OK) {
+                ESP_LOGE(_loggingTag, "MotorController::_setControlPhase failed: %s", esp_err_to_name(err));
+                return;
+            }
+            controller = _controllers[_controlPhase];
+        }
+    } else if (_ticksToNextStep.has_value() && _ticksToNextStep.value() == 0) {
+        _motor->commutateIfNecessary();
+        _ticksToNextStep = std::optional<uint32_t>();
+
+        std::optional<ControlPhase> nextControlPhase = controller->nextControlPhase(_controlPhase);
+        if (nextControlPhase.has_value()) {
+            _setControlPhase(nextControlPhase.value(), err);
+            if (err != ESP_OK) {
+                ESP_LOGE(_loggingTag, "MotorController::_setControlPhase failed: %s", esp_err_to_name(err));
+                return;
+            }
+            controller = _controllers[_controlPhase];
+        }
     }
 
-    if (!_timeToNextStep.has_value()) {
+    if (!_ticksToNextStep.has_value()) {
         std::optional<std::pair<uint16_t, MotorStep>> nextStep = controller->nextStepChange();
         if (nextStep.has_value()) {
-            _timeToNextStep = nextStep->first;
+            _ticksToNextStep = nextStep->first;
             _motor->setNextStep(nextStep->second);
         }
     } else {
-        (*_timeToNextStep)--;
+        (*_ticksToNextStep)--;
     }
 
-    _motor->setDutyCycle(controller->dutyCycle());
+    float dutyCycle = controller->dutyCycle();
+    _motor->setDutyCycle(dutyCycle * kMaxDutyCycle);
 
-    const std::optional<ControlPhase> nextControlPhase = controller->nextControlPhase(_controlPhase);
-    if (nextControlPhase.has_value()) {
-        _setControlPhase(nextControlPhase.value(), err);
-        if (err != ESP_OK) {
-            ESP_LOGE(_loggingTag, "MotorController::_setControlPhase failed: %s", esp_err_to_name(err));
-            return;
-        }
-    }
+    Tracer* tracer = Tracer::sharedTracer();
+    tracer->setControlMode(_controlPhase);
+    tracer->setTicksToNextStep(_ticksToNextStep.value_or(0));
+    tracer->setDutyCycle(dutyCycle);
+    tracer->setCurrentRPM(_motor->currentRPM());
+    tracer->setTargetRPM(_motor->targetRPM());
+    tracer->setError(Error::None); // TO DO: Report the error correctly
+    tracer->tick();
 }

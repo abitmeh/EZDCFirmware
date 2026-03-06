@@ -19,27 +19,28 @@
 using namespace bldc;
 using namespace esp;
 
-PulseInjectionControlStrategy::PulseInjectionControlStrategy(Motor& motor) : MotorControlStrategy(motor) {}
+PulseInjectionControlStrategy::PulseInjectionControlStrategy(MotorPtr& motor) : MotorControlStrategy(motor) {}
 
 void PulseInjectionControlStrategy::start(esp_err_t& err) {
-    _motor.setInPulseInjectionPhase(true);
+    ESP_LOGD(_loggingTag, "Starting PulseInjectionControlStrategy");
+    _motor->setInPulseInjectionPhase(true);
 }
 
 NextChange PulseInjectionControlStrategy::nextStepChange() {
     if (_phase == Cleanup) {
-        _motor.setAllHighZ();
+        _motor->setAllHighZ();
         const MotorStep nextStep = static_cast<MotorStep>(inject_get_phase(_adcValues.data()));
-        ESP_LOGD(_loggingTag, "Detected phase: %d", _motor.currentStep());
+        ESP_LOGD(_loggingTag, "Detected phase: %d", _motor->currentStep());
         ESP_LOGD(_loggingTag, "inject_adc_value: %lu %lu %lu %lu %lu %lu", _adcValues[0], _adcValues[1], _adcValues[2], _adcValues[3], _adcValues[4],
                  _adcValues[5]);
-        _motor.setInPulseInjectionPhase(false);
+        _motor->setInPulseInjectionPhase(false);
         _phase = static_cast<PulseInjectionPhase>(_phase + 1);
         return NextChange({0, nextStep});
     }
 
     switch (_operation) {
         case Charge:
-            _motor.setAllHighZ();
+            _motor->setAllHighZ();
             _operation = Inject;
             _phase = static_cast<PulseInjectionPhase>(_phase + 1);
             return NextChange(NextStep(kCapacitorChargeTime, static_cast<MotorStep>(_phase)));
@@ -52,17 +53,10 @@ NextChange PulseInjectionControlStrategy::nextStepChange() {
     return NextChange();
 }
 
-uint32_t PulseInjectionControlStrategy::dutyCycle() const {
+float PulseInjectionControlStrategy::dutyCycle() const {
     return kPulseInjectionDutyCycle;
 }
 
 std::optional<ControlPhase> PulseInjectionControlStrategy::nextControlPhase(ControlPhase currentControlPhase) const {
     return _phase == Complete ? std::optional<ControlPhase>(Alignment) : std::optional<ControlPhase>();
-}
-
-void IRAM_ATTR PulseInjectionControlStrategy::mcpwmTimerFull() {
-    if (_readADC) {
-        _adcValues[_phase - 1] = 1700;
-        _readADC = false;
-    }
 }

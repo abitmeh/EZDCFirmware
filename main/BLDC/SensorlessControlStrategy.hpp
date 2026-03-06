@@ -14,11 +14,12 @@
 #include "BLDC/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
-#include "ADCOneshot.hpp"
-
 #include <array>
 #include <optional>
 #include <tuple>
+#include <unordered_map>
+
+void adcTask(void* userInfo);
 
 namespace bldc {
     class McpwmContext;
@@ -26,32 +27,28 @@ namespace bldc {
     class SensorlessControlStrategy;
     using SensorlessControlStrategyPtr = std::shared_ptr<SensorlessControlStrategy>;
 
-    using SensorlessControlConfig = std::array<std::pair<adc_unit_t, esp::ADCChannelConfig>, kMotorPhaseCount>;
-
     class SensorlessControlStrategy : public MotorControlStrategy {
     public:
-        SensorlessControlStrategy(const SensorlessControlConfig& adcConfig, Motor& motor, esp_err_t& err);
-
-        virtual void mcpwmTimerFull() override;
+        SensorlessControlStrategy(MotorPtr& motor, esp_err_t& err);
 
         virtual void start(esp_err_t& err) override;
+        virtual void stop(esp_err_t& err) override;
 
         virtual NextChange nextStepChange() override;
 
-        virtual uint32_t dutyCycle() const override;
+        virtual float dutyCycle() const override;
 
-        void setPIDParameters(const pid_ctrl_parameter_t* parameters, esp_err_t& err);
+        void setPIDParameters(const pid_ctrl_parameter_t& parameters, esp_err_t& err);
 
     private:
+        bool _detectZeroCross(uint16_t ticksToWait, const std::array<uint32_t, kMotorPhaseCount + 1>& adcValues);
         std::optional<uint16_t> _completePhase();
 
-        std::array<esp::ADCOneshotChannelPtr<esp::Calibrated>, 3> _adcs;
-
         pid_ctrl_block_handle_t _pid;
+        pid_ctrl_parameter_t _pidParameters;
 
         bool _calculateSpeed = true;
         uint32_t _timeSpentAvoidingContinuousCurrent = 0;
-        std::array<uint32_t, 3> _adcValues;
         uint32_t _maxObservedValue = 0;
 
         static constexpr char _loggingTag[] = "bldc::SensorlessControlStrategy";

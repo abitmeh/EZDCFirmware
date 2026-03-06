@@ -11,39 +11,21 @@
 #include "BLDC/SensorlessControlStrategy.hpp"
 #include "BLDC/MotorConfig.hpp"
 
+#include "ADC/Continuous.hpp"
 #include "ESP32.hpp"
 
 #include <bldc_snls_lib.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include <ranges>
 
 using namespace bldc;
 using namespace esp;
+using namespace esp::adc;
 
-SensorlessControlStrategy::SensorlessControlStrategy(const SensorlessControlConfig& adcConfig, Motor& motor, esp_err_t& err) : MotorControlStrategy(motor) {
-    for (auto [i, channelConfig] : adcConfig | std::views::enumerate) {
-        ADCCalibrationPtr calibration =
-            std::make_shared<ADCCalibration>(channelConfig.first, channelConfig.second.configuration.atten, channelConfig.second.configuration.bitwidth, err);
-        if (calibration == nullptr || err != ESP_OK) {
-            ESP_LOGE(_loggingTag, "ADCCalibration creation failed: %s", esp_err_to_name(err));
-            return;
-        }
-
-        ADCOneshotPtr<Calibrated> adcUnit = ESP32::sharedESP32()->adcOneshot(calibration, err);
-        if (adcUnit == nullptr || err != ESP_OK) {
-            ESP_LOGE(_loggingTag, "ADCOneshot creation failed: %s", esp_err_to_name(err));
-            return;
-        }
-
-        ADCOneshotChannelPtr<Calibrated> adcChannel = adcUnit->channel(channelConfig.second.channel, err);
-        if (adcChannel == nullptr || err != ESP_OK) {
-            ESP_LOGE(_loggingTag, "adcChannel creation failed: %s", esp_err_to_name(err));
-            return;
-        }
-        _adcs[i] = adcChannel;
-    }
-
+SensorlessControlStrategy::SensorlessControlStrategy(MotorPtr& motor, esp_err_t& err) : MotorControlStrategy(motor) {
+    _pidParameters = kPidControlConfig.init_param;
     err = pid_new_control_block(&kPidControlConfig, &_pid);
     if (err != ESP_OK || _pid == nullptr) {
         ESP_LOGE(_loggingTag, "pid_new_control_block failed: %d", err);
@@ -52,15 +34,11 @@ SensorlessControlStrategy::SensorlessControlStrategy(const SensorlessControlConf
     }
 }
 
-void IRAM_ATTR SensorlessControlStrategy::mcpwmTimerFull() {
-    _adcValues[1] = 1400;
-    _adcValues[0] = miliVoltsIsr(_adcs[_motor.highImpedencePhase()].get());
-    if (_adcValues[0] > _maxObservedValue) {
-        _maxObservedValue = _adcValues[0];
-    }
-}
-
 void SensorlessControlStrategy::start(esp_err_t& err) {
+    ESP_LOGD(_loggingTag, "Starting SensorlessControlStrategy");
+
+    _motor->enableADCBiasLearning(true);
+
     _calculateSpeed = false;
     _timeSpentAvoidingContinuousCurrent = 0;
 
@@ -69,40 +47,62 @@ void SensorlessControlStrategy::start(esp_err_t& err) {
         err = ESP_ERR_INVALID_STATE;
         return;
     }
-    pid_reset_ctrl_block(_pid);
+
+    err = pid_reset_ctrl_block(_pid);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "pid_reset_ctrl_block failed: %s", esp_err_to_name(err));
+        return;
+    }
+    const float error = _motor->targetRPM() - _motor->currentRPM();
+    const float kp = _pidParameters.kp;
+    const float kd = _pidParameters.kd;
+    const float transitionIntegral = static_cast<float>(_motor->dutyCycle()) / static_cast<float>(kMaxDutyCycle) - (kp * error + kd * error);
+    float result;
+    err = pid_compute(_pid, transitionIntegral, &result);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "pid_compute failed: %s", esp_err_to_name(err));
+        return;
+    }
+}
+
+void SensorlessControlStrategy::stop(esp_err_t& err) {
+    _motor->enableADCBiasLearning(false);
 }
 
 NextChange SensorlessControlStrategy::nextStepChange() {
-    if (!_motor.isPhaseChangeComplete()) {
+    if (!_motor->isPhaseChangeComplete()) {
         return NextChange();
     }
 
-    const uint16_t timeInCurrentStep = _motor.timeInCurrentStep();
-    if (timeInCurrentStep < kZeroCrossAvoidContinuousCurrentTime) {
+    const uint16_t timeInCurrentStep = _motor->timeInCurrentStep();
+    const uint16_t expectedTimeInCurrentStep = _motor->expectedStepDuration();
+    const uint16_t zeroCrossBlankingTime = kZeroCrossBlankingPeriod * expectedTimeInCurrentStep;
+    if (timeInCurrentStep < zeroCrossBlankingTime) {
         return NextChange();
     }
 
-    const MotorStep currentStep = _motor.currentStep();
-    const MotorStep nextStep = static_cast<MotorStep>(zero_cross_adc_get_phase(currentStep, kZeroCrossRepeatTime, _adcValues.data()));
-
-    if (nextStep == currentStep) {
+    const MotorStep currentStep = _motor->currentStep();
+    const bool nextStep = _motor->detectZeroCross();
+    
+    if (!nextStep) {
         return NextChange();
     }
 
-    const uint16_t delay = timeInCurrentStep * 3.0 / kZeroCrossAdvance;
+    const uint16_t delay = timeInCurrentStep - 2 * kZeroCrossRepeatTime;
 
-    return NextChange(NextStep(delay, nextStep));
+    return NextChange(NextStep(delay, static_cast<MotorStep>((static_cast<uint8_t>(currentStep) + (nextStep ? 1 : 0)) % 6)));
 }
 
-uint32_t SensorlessControlStrategy::dutyCycle() const {
+float SensorlessControlStrategy::dutyCycle() const {
     float duty = 0;
-    int32_t a = _motor.targetRPM() - _motor.currentRPM();
-    pid_compute(_pid, (float)(a), &duty);
-    return abs((int)duty);
+    float a = _motor->targetRPM() - _motor->currentRPM();
+    return pid_compute(_pid, a, &duty);
 }
 
-void SensorlessControlStrategy::setPIDParameters(const pid_ctrl_parameter_t* parameters, esp_err_t& err) {
-    err = pid_update_parameters(_pid, parameters);
+void SensorlessControlStrategy::setPIDParameters(const pid_ctrl_parameter_t& parameters, esp_err_t& err) {
+    _pidParameters = parameters;
+
+    err = pid_update_parameters(_pid, &parameters);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "pid_update_parameters failed: %s", esp_err_to_name(err));
         return;

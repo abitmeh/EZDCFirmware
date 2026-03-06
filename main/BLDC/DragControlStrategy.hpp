@@ -13,6 +13,7 @@
 #include "BLDC/Motor.hpp"
 #include "BLDC/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
+#include "Utilities/LinearPiecewiseLinearFunction.hpp"
 
 #include <array>
 #include <optional>
@@ -26,11 +27,14 @@ namespace bldc {
 
     class DragControlStrategy : public MotorControlStrategy {
     public:
-        DragControlStrategy(Motor& motor, esp_err_t& err);
+        DragControlStrategy(MotorPtr& motor, esp_err_t& err);
+
+        virtual void start(esp_err_t&) override;
+        virtual void stop(esp_err_t&) override;
 
         virtual NextChange nextStepChange() override;
 
-        virtual uint32_t dutyCycle() const override;
+        virtual float dutyCycle() const override;
 
         virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
 

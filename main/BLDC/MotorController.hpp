@@ -17,6 +17,7 @@
 
 #include "GPIO.hpp"
 #include "GPTimer.hpp"
+#include "Interrupt.hpp"
 
 #include <esp_event.h>
 
@@ -25,18 +26,20 @@
 namespace bldc {
     struct MotorControlConfig {
         bldc::MotorConfig motorConfig;
-        bldc::SensorlessControlConfig sensorlessControlConfig;
 
         gpio_num_t sleepGPIONum;
         bool sleepValue;
     };
 
     void _controlTask(void* userInfo);
+    esp::InterruptResult _timerCallback(esp::GPTimer& timer, const gptimer_alarm_event_data_t& eventData, void* userInfo);
 
     class MotorController {
     public:
         MotorController(const MotorControlConfig& config, esp_err_t& err);
         ~MotorController();
+
+        void configureMotorFaultHandling(gpio_num_t gpio, bool inverted, esp::mcpwm::GPIOFault::Callback callback);
 
         void start(uint32_t targetRPM, esp_err_t& err);
         void stop(esp_err_t& err);
@@ -44,8 +47,7 @@ namespace bldc {
         Direction direction() const;
         void setDirection(Direction direction);
 
-        uint32_t dutyCycle() const;
-        void setDutyCycle(uint32_t dutyCycle);
+        float dutyCycle() const;
 
         uint32_t rpm() const;
         uint32_t targetRPM() const;
@@ -66,7 +68,7 @@ namespace bldc {
 
         ControlPhase _controlPhase = PulseInjection;
         std::array<MotorControlStrategyPtr, kControlPhaseCount> _controllers;
-        std::optional<uint16_t> _timeToNextStep;
+        std::optional<uint16_t> _ticksToNextStep;
         bool _running = false;
 
         esp::mcpwm::Timer::EventCallbacks _mcpwmTimerEventCallbacks;
@@ -81,5 +83,7 @@ namespace bldc {
         static constexpr char _loggingTag[] = "bldc::MotorController";
 
         friend void bldc::_controlTask(void* userInfo);
+        friend esp::InterruptResult _timerCallback(esp::GPTimer& timer, const gptimer_alarm_event_data_t& eventData, void* userInfo);
     };
 }  // namespace bldc
+

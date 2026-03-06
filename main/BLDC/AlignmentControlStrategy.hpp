@@ -26,16 +26,18 @@ namespace bldc {
 
     class AlignmentControlStrategy : public MotorControlStrategy {
     public:
-        AlignmentControlStrategy(Motor& motor);
+        AlignmentControlStrategy(MotorPtr& motor);
+
+        virtual void start(esp_err_t&) override;
 
         virtual NextChange nextStepChange() override;
 
-        virtual uint32_t dutyCycle() const override;
+        virtual float dutyCycle() const override;
 
         virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
 
     private:
-        bool _hasAligned = false;
+        int8_t _step = 0;
 
         static constexpr char _loggingTag[] = "bldc::AlignmentControlStrategy";
     };

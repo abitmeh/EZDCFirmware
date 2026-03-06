@@ -12,7 +12,7 @@
 
 #include "BLDC/Types.hpp"
 
-#include "mcpwm/MCPWM.hpp"
+#include "MCPWM/MCPWM.hpp"
 
 #include <array>
 #include <functional>
@@ -30,14 +30,8 @@ namespace bldc {
 
         McpwmConfig(uint8_t groupId, gpio_num_t uPin, gpio_num_t vPin, gpio_num_t wPin) : _groupId(groupId), _outputGpios({uPin, vPin, wPin}) {}
 
-        void configureFaultHandling(gpio_num_t faultPin, bool faultInverted, esp::mcpwm::GPIOFault::Callback faultCallback);
-
         uint8_t _groupId = 0;
         std::array<gpio_num_t, 3> _outputGpios = {GPIO_NUM_0, GPIO_NUM_0, GPIO_NUM_0};
-        gpio_num_t _faultGpio = GPIO_NUM_0;
-        bool _faultInverted = false;
-        esp::mcpwm::Timer::EventCallbacks _callbacks;
-        esp::mcpwm::GPIOFault::Callback _faultCallback;
     };
 
     class McpwmContext {
@@ -52,18 +46,21 @@ namespace bldc {
         esp_err_t setDutyCycle(MotorPhase phase, uint32_t dutyCycle);
         esp_err_t setGpioValue(MotorPhase phase, bool value);
 
+        esp_err_t setTimerEventCallback(esp::mcpwm::TimerEvent timerEvent, esp::mcpwm::Timer::EventCallback callback, void* userInfo);
+
+        esp_err_t setComparatorCallback(uint8_t comparatorIndex, esp::mcpwm::ComparatorCallback callback, void* userInfo);
+
+        esp_err_t start();
+
     private:
         esp::mcpwm::TimerPtr _timer;
         std::array<esp::mcpwm::OperatorPtr, kMaxMcpwmComparators> _operators;
         std::array<esp::mcpwm::ComparatorPtr, kMaxMcpwmComparators> _comparators;
         std::array<esp::mcpwm::GeneratorPtr, kMaxMcpwmComparators> _generators;
         esp::mcpwm::Timer::EventCallbacks _callbacks;
-        esp::mcpwm::GPIOFaultPtr _faultHandle;
-        esp::mcpwm::GPIOFault::Callback _faultCallback;
 
         static constexpr char _loggingTag[] = "bldc::McpwmContext";
 
-        friend bool faultOccurred(mcpwm_fault_handle_t, const mcpwm_fault_event_data_t*, void*);
         friend bool onFull(mcpwm_timer_handle_t timerHandle, const mcpwm_timer_event_data_t* eventData, void* userData);
         friend bool onEmpty(mcpwm_timer_handle_t timerHandle, const mcpwm_timer_event_data_t* eventData, void* userData);
         friend bool onStop(mcpwm_timer_handle_t timerHandle, const mcpwm_timer_event_data_t* eventData, void* userData);

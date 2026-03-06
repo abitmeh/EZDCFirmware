@@ -15,27 +15,41 @@
 
 #include <esp_log.h>
 
+#include <cmath>
+
 using namespace bldc;
 using namespace esp;
 
-DragControlStrategy::DragControlStrategy(Motor& motor, esp_err_t& err) : MotorControlStrategy(motor) {}
+DragControlStrategy::DragControlStrategy(MotorPtr& motor, esp_err_t& err) : MotorControlStrategy(motor) {
+    assert(kDragRpmCurve.endX() == kDragDutyCycleCurve.endX());
+}
+
+void DragControlStrategy::start(esp_err_t& err) {
+    ESP_LOGD(_loggingTag, "Starting DragControlStrategy");
+    _timeInDrag = 0;
+    _motor->enableADCBiasLearning(true);
+}
+
+void DragControlStrategy::stop(esp_err_t& err) {
+    _motor->enableADCBiasLearning(false);
+}
 
 NextChange DragControlStrategy::nextStepChange() {
     const uint16_t nextPhaseLength = _nextStepLength();
     _timeInDrag += nextPhaseLength;
-    _proportionThroughDrag = static_cast<float>(_timeInDrag) / kDragDuration;
-    return NextChange(NextStep(nextPhaseLength, static_cast<MotorStep>((_motor.currentStep() + 1) % 6)));
+
+    return NextChange(NextStep(nextPhaseLength, static_cast<MotorStep>((_motor->currentStep() + 1) % 6)));
 }
 
 uint16_t DragControlStrategy::_nextStepLength() {
-    const uint32_t rpm = kDragRPMAtRampStart + ((int32_t)kDragRPMAtRampEnd - (int32_t)kDragRPMAtRampStart) * _proportionThroughDrag;
+    const uint32_t rpm = kDragRpmCurve(_timeInDrag / kTicksPerSecond);
     return kADCRpmCalculationCoefficient / rpm;
 }
 
-uint32_t DragControlStrategy::dutyCycle() const {
-    return kDragDutyCycleAtRampStart + ((int32_t)kDragDutyCycleAtRampEnd - (int32_t)kDragDutyCycleAtRampStart) * _proportionThroughDrag;
+float DragControlStrategy::dutyCycle() const {
+    return kDragDutyCycleCurve(_timeInDrag / kTicksPerSecond);
 }
 
 std::optional<ControlPhase> DragControlStrategy::nextControlPhase(ControlPhase currentControlPhase) const {
-    return _proportionThroughDrag >= 1.0 ? std::optional<ControlPhase>(ClosedLoop) : std::optional<ControlPhase>();
+    return _timeInDrag >= kDragRpmCurve.endX() * kTicksPerSecond ? std::optional<ControlPhase>(ClosedLoop) : std::optional<ControlPhase>();
 }
