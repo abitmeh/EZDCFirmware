@@ -8,8 +8,8 @@
  *
  */
 
-#include "BLDC/Strategies/SensorlessControlStrategy.hpp"
 #include "BLDC/Strategies/SensorlessConfig.hpp"
+#include "BLDC/Strategies/SensorlessControlStrategy.hpp"
 
 #include <esp_log.h>
 

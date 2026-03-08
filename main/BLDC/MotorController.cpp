@@ -8,9 +8,9 @@
  *
  */
 
-#include "BLDC/MotorController.hpp"
 #include "BLDC/Motor.hpp"
 #include "BLDC/MotorConfig.hpp"
+#include "BLDC/MotorController.hpp"
 #include "BLDC/Strategies/AlignmentControlStrategy.hpp"
 #include "BLDC/Strategies/DragControlStrategy.hpp"
 #include "BLDC/Strategies/HaltControlStrategy.hpp"

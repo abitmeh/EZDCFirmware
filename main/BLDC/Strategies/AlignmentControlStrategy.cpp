@@ -8,8 +8,8 @@
  *
  */
 
-#include "BLDC/Strategies/AlignmentControlStrategy.hpp"
 #include "BLDC/Strategies/AlignmentConfig.hpp"
+#include "BLDC/Strategies/AlignmentControlStrategy.hpp"
 
 #include "ESP32.hpp"
 

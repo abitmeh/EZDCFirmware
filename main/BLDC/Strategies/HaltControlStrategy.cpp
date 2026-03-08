@@ -8,8 +8,8 @@
  *
  */
 
-#include "BLDC/Strategies/HaltControlStrategy.hpp"
 #include "BLDC/MotorConfig.hpp"
+#include "BLDC/Strategies/HaltControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
 #include <esp_log.h>

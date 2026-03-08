@@ -8,8 +8,8 @@
  *
  */
 
-#include "BLDC/Strategies/PulseInjectionControlStrategy.hpp"
 #include "BLDC/Strategies/PulseInjectionConfig.hpp"
+#include "BLDC/Strategies/PulseInjectionControlStrategy.hpp"
 
 #include <esp_log.h>
 

@@ -8,9 +8,9 @@
  *
  */
 
-#include "BLDC/Strategies/DragControlStrategy.hpp"
 #include "BLDC/MotorConfig.hpp"
 #include "BLDC/Strategies/DragConfig.hpp"
+#include "BLDC/Strategies/DragControlStrategy.hpp"
 
 #include "ESP32.hpp"
 
