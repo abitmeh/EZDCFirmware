@@ -9,14 +9,14 @@
  */
 
 #include "BLDC/Motor.hpp"
+#include "BLDC/MotorConfig.hpp"
 #include "Utilities/Tracer.hpp"
 
 #include "ESP32.hpp"
+#include "Timer.hpp"
 
-#include <bldc_snls_lib.h>
 #include <esp_log.h>
 #include <esp_task_wdt.h>
-#include <esp_timer.h>
 
 #include <algorithm>
 #include <cmath>
@@ -30,11 +30,11 @@ using namespace esp::adc;
 using namespace esp::mcpwm;
 
 namespace bldc {
-    static constexpr int64_t kADCPipelineDelayUs = 12;
+    static constexpr std::chrono::microseconds kADCPipelineDelay = 12us;
 
     InterruptResult IRAM_ATTR _onAdcConversion(const uint8_t* rawData, size_t count, void* userInfo) {
         Motor* motor = reinterpret_cast<Motor*>(userInfo);
-        motor->_lastBatchEndUs.store(esp_timer_get_time(), std::memory_order_relaxed);
+        motor->_lastBatchEnd.store(esp::Timer::now(), std::memory_order_relaxed);
 
         BaseType_t highPriorityTaskWoken = pdFALSE;
         xRingbufferSendFromISR(motor->_rawADCDataRingbuffer, rawData, count, &highPriorityTaskWoken);
@@ -61,26 +61,29 @@ namespace bldc {
                 continue;
             }
 
-            const int64_t batchEndUs = motor->_lastBatchEndUs.load(std::memory_order_relaxed);
+            const std::chrono::microseconds batchEnd = motor->_lastBatchEnd.load(std::memory_order_relaxed);
             const size_t totalSamples = count / sizeof(adc_digi_output_data_t);
             const size_t totalSlots = totalSamples / (kMotorPhaseCount + 1);
             const size_t sampleFrequency = kAdcFrequency * (kMotorPhaseCount + 1);
-            const int64_t batchSpanUs = (static_cast<int64_t>(totalSamples) * 1'000'000LL) / sampleFrequency;
-            const int64_t batchStartUs = batchEndUs - batchSpanUs;
+            const std::chrono::microseconds batchSpan((static_cast<int64_t>(totalSamples) * 1'000'000LL) / sampleFrequency);
+            const std::chrono::microseconds batchStart = batchEnd - batchSpan;
 
-            if (batchSpanUs == 0 || totalSlots == 0) {
+            if (batchSpan == 0us || totalSlots == 0) {
                 continue;
             }
 
-            const int64_t valleyUs = motor->_lastValleyUs.load(std::memory_order_relaxed) - kADCPipelineDelayUs;
+            const std::chrono::microseconds valley = motor->_lastValley.load(std::memory_order_relaxed) - kADCPipelineDelay;
 
-            const int64_t offset = valleyUs - batchStartUs;
-            const int64_t offsetInBatch = ((offset % batchSpanUs) + batchSpanUs) % batchSpanUs;
-            motor->_offsetUs = static_cast<int16_t>(std::clamp(offsetInBatch, (int64_t)std::numeric_limits<int16_t>::min(), (int64_t)std::numeric_limits<int16_t>::max()));
+            const std::chrono::microseconds offset = valley - batchStart;
+            const std::chrono::microseconds offsetInBatch = ((offset % batchSpan) + batchSpan) % batchSpan;
+            static constexpr std::chrono::microseconds minTick16 = static_cast<std::chrono::microseconds>(std::numeric_limits<Ticks16>::min());
+            static constexpr std::chrono::microseconds maxTick16 = static_cast<std::chrono::microseconds>(std::numeric_limits<Ticks16>::max());
 
-            size_t bestSampleSlot = static_cast<size_t>((totalSlots * offsetInBatch) / batchSpanUs);
+            motor->_offset = std::chrono::duration_cast<Ticks16>(std::clamp(offsetInBatch, minTick16, maxTick16));
+
+            size_t bestSampleSlot = static_cast<size_t>((totalSlots * offsetInBatch) / batchSpan);
             bestSampleSlot = std::min(bestSampleSlot, totalSlots - 1);
-            for (size_t j = (kMotorPhaseCount + 1) * bestSampleSlot; j < (kMotorPhaseCount +1) * (bestSampleSlot + 1); ++j) {
+            for (size_t j = (kMotorPhaseCount + 1) * bestSampleSlot; j < (kMotorPhaseCount + 1) * (bestSampleSlot + 1); ++j) {
                 const adc_continuous_data_t& data = parsedData[j];
                 if (!data.valid) {
                     continue;
@@ -88,17 +91,18 @@ namespace bldc {
 
                 const uint8_t phase = motor->_phaseForChannel(data.channel);
 
-                motor->_rawADCValues[phase] = static_cast<uint16_t>(data.raw_data) + (phase != kMotorPhaseCount ? motor->_integerADCBiases[motor->_currentStep] : 0);
+                motor->_rawADCValues[phase] =
+                    static_cast<uint16_t>(data.raw_data) + (phase != kMotorPhaseCount ? motor->_integerADCBiases[motor->_currentStep] : 0);
             }
         }
     }
-    
+
     InterruptResult IRAM_ATTR _onMcpwmTimerFull(const mcpwm_timer_event_data_t& eventData, void* userData) {
         Motor* motor = reinterpret_cast<Motor*>(userData);
 
         // Stamp the valley time as early as possible in the ISR so the
         // measurement is as close to the actual counter-full moment as we can get.
-        motor->_lastValleyUs.store(esp_timer_get_time(), std::memory_order_relaxed);
+        motor->_lastValley.store(esp::Timer::now(), std::memory_order_relaxed);
 
         if (motor->_inPulseInjectionPhase) {
             return InterruptResult::NoHighPriorityTaskWoken;
@@ -107,10 +111,12 @@ namespace bldc {
         const uint8_t currentPhase = static_cast<uint8_t>(motor->_highImpedencePhase);
         const uint8_t motorAngle = static_cast<uint8_t>(motor->_currentStep);
 
-        if (motorAngle >= 6) { return InterruptResult::NoHighPriorityTaskWoken; }
+        if (motorAngle >= 6) {
+            return InterruptResult::NoHighPriorityTaskWoken;
+        }
 
         assert(currentPhase < 3);
-        assert(motorAngle  < 6);
+        assert(motorAngle < 6);
 
         static constexpr int16_t inverseAlpha = 5;
 
@@ -121,26 +127,23 @@ namespace bldc {
         const int16_t previousFloatingPhaseValue = motor->_floatingPhaseValue;
         const int16_t previousNeutralValue = motor->_neutralValue;
 
-        const bool shouldSmoothWithPreviousValue(
-            motor->_speed.timeInCurrentStep >= 2 &&
-            previousNeutralValue != 0 &&
-            (previousFloatingPhaseValue - previousNeutralValue) * 3 < previousNeutralValue * 10
-        );
+        const bool shouldSmoothWithPreviousValue(motor->_speed.timeInCurrentStep >= 2_tk && previousNeutralValue != 0 &&
+                                                 (previousFloatingPhaseValue - previousNeutralValue) * 3 < previousNeutralValue * 10);
 
-        const uint16_t smoothedFloatingPhaseValue = shouldSmoothWithPreviousValue
-                ? (previousFloatingPhaseValue * inverseAlpha + (floatingPhaseValue - previousFloatingPhaseValue)) / inverseAlpha
-                : floatingPhaseValue;
+        const uint16_t smoothedFloatingPhaseValue =
+            shouldSmoothWithPreviousValue ? (previousFloatingPhaseValue * inverseAlpha + (floatingPhaseValue - previousFloatingPhaseValue)) / inverseAlpha
+                                          : floatingPhaseValue;
 
         const uint16_t smoothedNeutralValue = (previousNeutralValue * inverseAlpha + (neutralValue - previousNeutralValue)) / inverseAlpha;
 
         motor->_setADCValues(smoothedFloatingPhaseValue, smoothedNeutralValue);
         return InterruptResult::NoHighPriorityTaskWoken;
     }
-}
+}  // namespace bldc
 
 Motor::Motor(const MotorConfig& config, esp_err_t& err)
-: _inputSwitchContext(McpwmConfig(0, config.inputGPIOs[0], config.inputGPIOs[1], config.inputGPIOs[2]), err)
-, _enableSwitchContext(McpwmConfig(1, config.enableGPIOs[0], config.enableGPIOs[1], config.enableGPIOs[2]), err) {
+    : _inputSwitchContext(McpwmConfig(0, config.inputGPIOs[0], config.inputGPIOs[1], config.inputGPIOs[2]), err),
+      _enableSwitchContext(McpwmConfig(1, config.enableGPIOs[0], config.enableGPIOs[1], config.enableGPIOs[2]), err) {
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "Failed to construct McpwmContext: %s", esp_err_to_name(err));
         return;
@@ -165,7 +168,7 @@ Motor::Motor(const MotorConfig& config, esp_err_t& err)
         adcConfig.channels.emplace_back(config.adcConfig.unit, channel, Attenuation::Decibels12, BitWidth::Bits12);
         _channelToPhase[i] = std::pair<adc_channel_t, MotorPhase>(channel, static_cast<MotorPhase>(i));
     }
-    
+
     _adc = ESP32::sharedESP32()->adcContinuous(adcConfig, err);
     _rawAdc = _adc.get();
     if (err != ESP_OK) {
@@ -173,10 +176,7 @@ Motor::Motor(const MotorConfig& config, esp_err_t& err)
         return;
     }
 
-    ADCContinuousEventCallbacks adcCallbacks{
-        .onConversionComplete = bldc::_onAdcConversion,
-        .onPoolOverflow = nullptr
-    };
+    ADCContinuousEventCallbacks adcCallbacks{.onConversionComplete = bldc::_onAdcConversion, .onPoolOverflow = nullptr};
     _adc->setEventCallbacks(adcCallbacks, this);
 
     BaseType_t adcTaskCreationResult = xTaskCreatePinnedToCore(_adcTask, "ADC Task", 4096, this, tskIDLE_PRIORITY + 4, &_adcTaskHandle, 1);
@@ -192,12 +192,7 @@ Motor::~Motor() {
 }
 
 esp_err_t Motor::configureFaultHandling(gpio_num_t gpioNum, bool inverted, esp::mcpwm::GPIOFault::Callback callback) {
-    GPIOFaultConfig faultConfig = {
-        .groupId = 0,
-        .interruptPriority = esp::InterruptPriority::Default,
-        .gpioNum = gpioNum,
-        .activeHigh = inverted
-    };
+    GPIOFaultConfig faultConfig = {.groupId = 0, .interruptPriority = esp::InterruptPriority::Default, .gpioNum = gpioNum, .activeHigh = inverted};
     esp_err_t err = ESP_OK;
     _faultHandler = ESP32::sharedESP32()->mcpwm().gpioFault(faultConfig, err);
     if (err != ESP_OK) {
@@ -224,8 +219,8 @@ void Motor::start(uint32_t targetRPM) {
 
     setAllHighZ();
     _speed.targetRPM = targetRPM;
-    _nextStep = Step0;
-    _currentStep = Step0;
+    _nextStep = Degrees0;
+    _currentStep = Degrees0;
     _highImpedencePhase = U;
 }
 
@@ -243,9 +238,6 @@ bool Motor::isStalled() const {
 void Motor::tick() {
     _speed.timeInCurrentStep++;
 
-    Tracer::sharedTracer()->setADCValues(_currentStep, _floatingPhaseValue, _neutralValue);
-    Tracer::sharedTracer()->setValleyOffset(_offsetUs);
-
     calculateSpeed();
 }
 
@@ -259,25 +251,25 @@ void Motor::calculateSpeed() {
         return;
     }
 
-    uint32_t totalDuration = 0;
+    Ticks32 totalDuration = 0_tk;
     for (auto iter = _stepDurations.begin(); iter != _stepDurations.end(); ++iter) {
         totalDuration += *iter;
         // Always keep at least one duration, but keep enough to figure out an acurate speed.
-        if (totalDuration >= kSpeedAveragingTicks && iter != _stepDurations.begin()) {
+        if (totalDuration >= kSpeedAveragingDuration && iter != _stepDurations.begin()) {
             _stepDurations.erase(iter, _stepDurations.end());
             break;
         }
     }
 
-    uint32_t averageDuration = totalDuration / _stepDurations.size();
+    Ticks32 averageDuration = totalDuration / _stepDurations.size();
     _expectedStepDuration = averageDuration;
-    if (averageDuration == 0) {
+    if (averageDuration == 0_tk) {
         return;
     }
     if (_speed.timeInCurrentStep > averageDuration) {
         averageDuration = (totalDuration + _speed.timeInCurrentStep) / (_stepDurations.size() + 1);
     }
-    _speed.currentRPM = kADCRpmCalculationCoefficient / averageDuration;
+    _speed.currentRPM = kTimePerPhaseAt1RPM / averageDuration;
 }
 
 void Motor::commutateIfNecessary() {
@@ -307,12 +299,11 @@ void Motor::_commutate() {
                 break;
         }
     }
-    Tracer::sharedTracer()->sendEvent(TraceEvent::PhaseChangeRequested);
+    //Tracer::sharedTracer()->sendEvent(TraceEvent::PhaseChangeRequested);
     _currentStep = _nextStep;
     _phaseChangeComplete = true;
     _stepDurations.push_front(_speed.timeInCurrentStep);
-    _speed.timeInCurrentStep = 0;
-    _debug_ticksToNextStep = 0;
+    _speed.timeInCurrentStep = 0_tks;
 }
 
 void Motor::_setPhaseHigh(MotorPhase phase, uint32_t dutyCycle) {
@@ -459,17 +450,17 @@ void Motor::_willCommutate() {
 bool Motor::detectZeroCross() {
     if (_detectionStep != _currentStep) {
         _detectionStep = _currentStep;
-        _ticksInCrossedState = 0;
+        _ticksInCrossedState = 0_tks;
         _hasBeenUncrossed = false;
-        _expectingCrossUpwards = _detectionStep == Step0 || _detectionStep == Step2 || _detectionStep == Step4;
+        _expectingCrossUpwards = _detectionStep == Degrees0 || _detectionStep == Degrees120 || _detectionStep == Degrees240;
     }
 
     bool isBelow = _floatingPhaseValue < _neutralValue;
     bool isCrossed = isBelow != _expectingCrossUpwards;
     if (isCrossed && _hasBeenUncrossed) {
         _ticksInCrossedState++;
-    } else if (_ticksInCrossedState > 0) {
-        _ticksInCrossedState = 0;
+    } else if (_ticksInCrossedState > 0_tks) {
+        _ticksInCrossedState = 0_tks;
     }
     _hasBeenUncrossed |= !isCrossed;
 
@@ -489,4 +480,11 @@ MotorPhase Motor::_phaseForChannel(adc_channel_t channel) {
 
     ESP_DRAM_LOGE(_loggingTag, "No Phase found for channel %u", channel);
     return MotorPhase::U;
+}
+
+void Motor::writeSample(TraceSample* sample) {
+    sample->phase = _currentStep;
+    sample->phaseValue = _floatingPhaseValue;
+    sample->neutralValue = _neutralValue;
+    sample->valleyOffsetUs = static_cast<std::chrono::microseconds>(_offset).count();
 }

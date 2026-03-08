@@ -13,13 +13,14 @@
 #include "BLDC/McpwmContext.hpp"
 #include "BLDC/MotorConfig.hpp"
 #include "BLDC/Types.hpp"
+#include "Utilities/Tracer.hpp"
 
 #include "ADC/Continuous.hpp"
 #include "MCPWM/GPIOFault.hpp"
 
 #include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 #include <freertos/ringbuf.h>
+#include <freertos/task.h>
 
 #include <array>
 #include <atomic>
@@ -46,14 +47,14 @@ namespace bldc {
     void _adcTask(void* userInfo);
     esp::InterruptResult _onAdcConversion(const uint8_t* rawData, size_t count, void* userInfo);
     esp::InterruptResult _onMcpwmTimerFull(const mcpwm_timer_event_data_t& eventData, void* userData);
-    
+
     struct Speed {
     public:
-        uint32_t instantaneousRPM() { return timeInCurrentStep == 0 ? 0 : static_cast<uint32_t>(kADCRpmCalculationCoefficient / timeInCurrentStep); }
+        uint32_t instantaneousRPM() { return timeInCurrentStep == 0_tks ? 0 : static_cast<uint32_t>(kTimePerPhaseAt1RPM / timeInCurrentStep); }
 
         float targetRPM = 0;
         float currentRPM = 0;
-        uint32_t timeInCurrentStep = 0;
+        Ticks32 timeInCurrentStep{0u};
     };
 
     class Motor;
@@ -68,7 +69,7 @@ namespace bldc {
         Motor& operator=(const Motor&) = delete;
         Motor(Motor&&) = delete;
         Motor& operator=(Motor&&) = delete;
-        
+
         esp_err_t configureFaultHandling(gpio_num_t gpioNum, bool inverted, esp::mcpwm::GPIOFault::Callback callback);
 
         void start(uint32_t targetRPM);
@@ -94,12 +95,13 @@ namespace bldc {
 
         bool isPhaseChangeComplete() const { return _phaseChangeComplete; }
 
-        MotorStep currentStep() const { return _currentStep; }
+        PhaseAngle currentStep() const { return _currentStep; }
 
-        uint32_t timeInCurrentStep() const { return _speed.timeInCurrentStep; }
-        uint32_t expectedStepDuration() const { return _expectedStepDuration; }
+        Ticks16 timeInCurrentStep() const { return _speed.timeInCurrentStep; }
 
-        void setNextStep(MotorStep step) { _nextStep = step; }
+        Ticks16 expectedStepDuration() const { return _expectedStepDuration; }
+
+        void setNextStep(PhaseAngle step) { _nextStep = step; }
 
         void setInPulseInjectionPhase(bool pulseInjection) { _inPulseInjectionPhase = pulseInjection; }
 
@@ -111,9 +113,11 @@ namespace bldc {
 
         bool detectZeroCross();
 
-        void setControlPhase(ControlPhase controlPhase) { _controlPhase = controlPhase; }
+        void setControlMode(ControlMode ControlMode) { _ControlMode = ControlMode; }
 
         void enableADCBiasLearning(bool enable) { _adcBiasLearning = enable; }
+
+        void writeSample(TraceSample* sample);
 
     private:
         void _commutate();
@@ -161,25 +165,24 @@ namespace bldc {
         esp::mcpwm::GPIOFaultPtr _faultHandler;
 
         Direction _direction = Clockwise;
-        MotorStep _nextStep = Step0;
-        MotorStep _currentStep = Step0;
-        std::deque<uint32_t> _stepDurations;
-        uint32_t _expectedStepDuration = 0;
+        PhaseAngle _nextStep = Degrees0;
+        PhaseAngle _currentStep = Degrees0;
+        std::deque<Ticks16> _stepDurations;
+        Ticks16 _expectedStepDuration{static_cast<uint16_t>(0)};
         MotorPhase _highImpedencePhase = U;
         bool _phaseChangeComplete = true;
         uint16_t _dutyCycle = 0;
         Speed _speed;
         bool _inPulseInjectionPhase = false;
-        ControlPhase _controlPhase = PulseInjection;
-        uint16_t _debug_ticksToNextStep = 0;
-        int16_t _offsetUs;
-        
+        ControlMode _ControlMode = PulseInjection;
+        std::chrono::microseconds _offset;
+
         esp::adc::ADCContinuousPtr _adc = nullptr;
         esp::adc::ADCContinuous* _rawAdc = nullptr;
         uint16_t _floatingPhaseValue;
         uint16_t _neutralValue;
-        std::atomic<int64_t> _lastValleyUs;
-        std::atomic<int64_t> _lastBatchEndUs;
+        std::atomic<std::chrono::microseconds> _lastValley;
+        std::atomic<std::chrono::microseconds> _lastBatchEnd;
         RingbufHandle_t _rawADCDataRingbuffer;
         TaskHandle_t _adcTaskHandle;
         uint16_t _rawADCValues[kMotorPhaseCount + 1];
@@ -190,16 +193,16 @@ namespace bldc {
         size_t _numberOfObservedValuesThisCommutation = 0;
         uint32_t _observedTotalFloatingPhaseThisCommutation = 0;
         uint32_t _observedTotalNeutralThisCommutation = 0;
-        MotorStep _learningStep = Step0;
+        PhaseAngle _learningStep = Degrees0;
 
         // Zero crossing detection data
-        uint16_t _ticksInCrossedState = 0;
+        Ticks16 _ticksInCrossedState{0};
         bool _hasBeenUncrossed = false;
         bool _expectingCrossUpwards = false;
-        MotorStep _detectionStep = Step0;
+        PhaseAngle _detectionStep = Degrees0;
 
-        static constexpr uint16_t kStallPeriod = 15'000;
-    
+        static constexpr Ticks16 kStallPeriod{15'000};
+
         static constexpr char _loggingTag[] = "bldc::Motor";
 
         friend void _adcTask(void* userInfo);

@@ -11,7 +11,8 @@
 #pragma once
 
 #include "BLDC/Motor.hpp"
-#include "BLDC/MotorControlStrategy.hpp"
+#include "BLDC/MotorConfig.hpp"
+#include "BLDC/Strategies/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 #include "Utilities/LinearPiecewiseLinearFunction.hpp"
 
@@ -36,12 +37,12 @@ namespace bldc {
 
         virtual float dutyCycle() const override;
 
-        virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
+        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const override;
 
     private:
-        uint16_t _nextStepLength();
+        Ticks32 _durationInNextPhase();
 
-        uint32_t _timeInDrag = 0;
+        Ticks32 _timeInDrag = 0_tk;
         float _proportionThroughDrag = .0f;
 
         static constexpr char _loggingTag[] = "bldc::DragControlStrategy";

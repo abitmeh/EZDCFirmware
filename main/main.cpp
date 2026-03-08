@@ -13,7 +13,6 @@
 #include <driver/gpio.h>
 #include <esp_log.h>
 #include <esp_task_wdt.h>
-#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/idf_additions.h>
 
@@ -22,7 +21,7 @@
 #include <ranges>
 #include <string>
 
-DRAM_ATTR static const char* tag = "EZDC";
+DRAM_ATTR static const char* loggingTag = "EZDC";
 
 using namespace esp;
 using namespace bldc;
@@ -52,7 +51,7 @@ static const gpio_num_t kLEDGreenPin = GPIO_NUM_34;
 static const gpio_num_t kLEDBluePin = GPIO_NUM_35;
 
 InterruptResult _handleMotorFault(const mcpwm_fault_event_data_t& faultData, void* userInfo) {
-    ESP_DRAM_LOGI(tag, "Motor fault!");
+    ESP_DRAM_LOGI(loggingTag, "Motor fault!");
     return InterruptResult::NoHighPriorityTaskWoken;
 }
 
@@ -61,7 +60,7 @@ void app_main(void) {
     esp_err_t err = ESP_OK;
 
     esp_task_wdt_deinit();
-    
+
     MotorADCConfig motorADCConfig;
 
     static const std::array<gpio_num_t, 4> channelPins{kBEMFUPin, kBEMFVPin, kBEMFWPin, kBEMFVDDPin};

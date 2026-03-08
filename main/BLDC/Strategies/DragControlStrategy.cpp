@@ -8,8 +8,9 @@
  *
  */
 
-#include "BLDC/DragControlStrategy.hpp"
+#include "BLDC/Strategies/DragControlStrategy.hpp"
 #include "BLDC/MotorConfig.hpp"
+#include "BLDC/Strategies/DragConfig.hpp"
 
 #include "ESP32.hpp"
 
@@ -26,7 +27,7 @@ DragControlStrategy::DragControlStrategy(MotorPtr& motor, esp_err_t& err) : Moto
 
 void DragControlStrategy::start(esp_err_t& err) {
     ESP_LOGD(_loggingTag, "Starting DragControlStrategy");
-    _timeInDrag = 0;
+    _timeInDrag = 0_tk;
     _motor->enableADCBiasLearning(true);
 }
 
@@ -35,21 +36,21 @@ void DragControlStrategy::stop(esp_err_t& err) {
 }
 
 NextChange DragControlStrategy::nextStepChange() {
-    const uint16_t nextPhaseLength = _nextStepLength();
+    const Ticks32 nextPhaseLength = _durationInNextPhase();
     _timeInDrag += nextPhaseLength;
 
-    return NextChange(NextStep(nextPhaseLength, static_cast<MotorStep>((_motor->currentStep() + 1) % 6)));
+    return NextChange(NextStep(nextPhaseLength, static_cast<PhaseAngle>((_motor->currentStep() + 1) % 6)));
 }
 
-uint16_t DragControlStrategy::_nextStepLength() {
-    const uint32_t rpm = kDragRpmCurve(_timeInDrag / kTicksPerSecond);
-    return kADCRpmCalculationCoefficient / rpm;
+Ticks32 DragControlStrategy::_durationInNextPhase() {
+    const uint32_t rpm = kDragRpmCurve(static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(_timeInDrag).count()));
+    return kTimePerPhaseAt1RPM / rpm;
 }
 
 float DragControlStrategy::dutyCycle() const {
-    return kDragDutyCycleCurve(_timeInDrag / kTicksPerSecond);
+    return kDragDutyCycleCurve(static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(_timeInDrag).count()));
 }
 
-std::optional<ControlPhase> DragControlStrategy::nextControlPhase(ControlPhase currentControlPhase) const {
-    return _timeInDrag >= kDragRpmCurve.endX() * kTicksPerSecond ? std::optional<ControlPhase>(ClosedLoop) : std::optional<ControlPhase>();
+std::optional<ControlMode> DragControlStrategy::nextControlMode(ControlMode currentControlMode) const {
+    return _timeInDrag >= std::chrono::milliseconds(static_cast<uint64_t>(kDragRpmCurve.endX())) ? std::optional<ControlMode>(ClosedLoop) : std::nullopt;
 }

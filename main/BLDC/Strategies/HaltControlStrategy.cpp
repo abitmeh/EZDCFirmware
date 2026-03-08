@@ -8,8 +8,9 @@
  *
  */
 
-#include "BLDC/HaltControlStrategy.hpp"
+#include "BLDC/Strategies/HaltControlStrategy.hpp"
 #include "BLDC/MotorConfig.hpp"
+#include "BLDC/Types.hpp"
 
 #include <esp_log.h>
 
@@ -31,6 +32,6 @@ float HaltControlStrategy::dutyCycle() const {
     return 0.0f;
 }
 
-std::optional<ControlPhase> HaltControlStrategy::nextControlPhase(ControlPhase controlPhase) const {
-    return controlPhase == Stopped ? std::optional<ControlPhase>() : std::optional<ControlPhase>(Stopped);
+std::optional<ControlMode> HaltControlStrategy::nextControlMode(ControlMode controlMode) const {
+    return controlMode == Stopped ? std::nullopt : std::optional<ControlMode>(ControlMode::Stopped);
 }

@@ -11,7 +11,7 @@
 #pragma once
 
 #include "BLDC/Motor.hpp"
-#include "BLDC/MotorControlStrategy.hpp"
+#include "BLDC/Strategies/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
 #include <array>

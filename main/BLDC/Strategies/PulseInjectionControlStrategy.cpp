@@ -8,12 +8,9 @@
  *
  */
 
-#include "BLDC/PulseInjectionControlStrategy.hpp"
-#include "BLDC/MotorConfig.hpp"
+#include "BLDC/Strategies/PulseInjectionControlStrategy.hpp"
+#include "BLDC/Strategies/PulseInjectionConfig.hpp"
 
-#include "ESP32.hpp"
-
-#include <bldc_snls_lib.h>
 #include <esp_log.h>
 
 using namespace bldc;
@@ -29,13 +26,14 @@ void PulseInjectionControlStrategy::start(esp_err_t& err) {
 NextChange PulseInjectionControlStrategy::nextStepChange() {
     if (_phase == Cleanup) {
         _motor->setAllHighZ();
-        const MotorStep nextStep = static_cast<MotorStep>(inject_get_phase(_adcValues.data()));
-        ESP_LOGD(_loggingTag, "Detected phase: %d", _motor->currentStep());
+        // TO DO: Recover PhaseAngle
+        //const PhaseAngle nextStep = static_cast<PhaseAngle>(inject_get_phase(_adcValues.data()));
+        const PhaseAngle nextStep = _motor->currentStep();  // BUG BUG BUG
         ESP_LOGD(_loggingTag, "inject_adc_value: %lu %lu %lu %lu %lu %lu", _adcValues[0], _adcValues[1], _adcValues[2], _adcValues[3], _adcValues[4],
                  _adcValues[5]);
         _motor->setInPulseInjectionPhase(false);
         _phase = static_cast<PulseInjectionPhase>(_phase + 1);
-        return NextChange({0, nextStep});
+        return NextChange(NextStep(0, nextStep));
     }
 
     switch (_operation) {
@@ -43,11 +41,11 @@ NextChange PulseInjectionControlStrategy::nextStepChange() {
             _motor->setAllHighZ();
             _operation = Inject;
             _phase = static_cast<PulseInjectionPhase>(_phase + 1);
-            return NextChange(NextStep(kCapacitorChargeTime, static_cast<MotorStep>(_phase)));
+            return NextChange(NextStep(kCapacitorChargeTime, static_cast<PhaseAngle>(_phase)));
         case Inject:
             _readADC = true;
             _operation = Charge;
-            return NextChange(NextStep(kPulseLength, static_cast<MotorStep>(_phase)));
+            return NextChange(NextStep(kPulseLength, static_cast<PhaseAngle>(_phase)));
     }
 
     return NextChange();
@@ -57,6 +55,6 @@ float PulseInjectionControlStrategy::dutyCycle() const {
     return kPulseInjectionDutyCycle;
 }
 
-std::optional<ControlPhase> PulseInjectionControlStrategy::nextControlPhase(ControlPhase currentControlPhase) const {
-    return _phase == Complete ? std::optional<ControlPhase>(Alignment) : std::optional<ControlPhase>();
+std::optional<ControlMode> PulseInjectionControlStrategy::nextControlMode(ControlMode currentControlMode) const {
+    return _phase == Complete ? std::optional<ControlMode>(Alignment) : std::nullopt;
 }

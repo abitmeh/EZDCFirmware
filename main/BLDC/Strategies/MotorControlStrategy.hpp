@@ -8,9 +8,7 @@
  *
  */
 
-#include "Motor.hpp"
-
-#include "ADC/Continuous.hpp"
+#include "BLDC/Motor.hpp"
 
 #include <array>
 #include <optional>
@@ -21,7 +19,7 @@ namespace bldc {
     class MotorControlStrategy;
     using MotorControlStrategyPtr = std::shared_ptr<MotorControlStrategy>;
 
-    using NextStep = std::pair<uint16_t, MotorStep>;
+    using NextStep = std::pair<Ticks16, PhaseAngle>;
 
     using NextChange = std::optional<NextStep>;
 
@@ -30,13 +28,14 @@ namespace bldc {
         MotorControlStrategy(MotorPtr& motor) : _motor(motor) {}
 
         virtual void start(esp_err_t&) {}
+
         virtual void stop(esp_err_t&) {}
 
         virtual NextChange nextStepChange() = 0;
 
         virtual float dutyCycle() const = 0;
 
-        virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const { return std::optional<ControlPhase>(); }
+        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const { return std::optional<ControlMode>(); }
 
     protected:
         MotorPtr _motor;

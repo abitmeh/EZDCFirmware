@@ -21,8 +21,8 @@ from matplotlib.patches import Patch
 from matplotlib.collections import LineCollection
 from Log import *
 
-# ControlPhase enum (matches firmware ControlPhase)
-class ControlPhase:
+# ControlMode enum (matches firmware ControlMode)
+class ControlMode:
     PulseInjection = 0
     Alignment      = 1
     Drag           = 2
@@ -437,7 +437,7 @@ saturated_count   = None
 saturated_reliable = True
 
 for i in range(len(t)):
-    if cm[i] not in (ControlPhase.Drag, ControlPhase.ClosedLoop):
+    if cm[i] not in (ControlMode.Drag, ControlMode.ClosedLoop):
         continue
 
     tick_val  = int(ticks_arr[i])

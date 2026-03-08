@@ -12,7 +12,7 @@
 
 #include "BLDC/McpwmContext.hpp"
 #include "BLDC/Motor.hpp"
-#include "BLDC/SensorlessControlStrategy.hpp"
+#include "BLDC/Strategies/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
 #include "GPIO.hpp"
@@ -58,7 +58,7 @@ namespace bldc {
 
         void _tick();
 
-        void _setControlPhase(ControlPhase phase, esp_err_t& err);
+        void _setControlMode(ControlMode phase, esp_err_t& err);
         bool _checkForStall(esp_err_t& err);
 
         esp::GPTimerPtr _timer;
@@ -66,9 +66,9 @@ namespace bldc {
 
         MotorPtr _motor;
 
-        ControlPhase _controlPhase = PulseInjection;
-        std::array<MotorControlStrategyPtr, kControlPhaseCount> _controllers;
-        std::optional<uint16_t> _ticksToNextStep;
+        ControlMode _ControlMode = Alignment;
+        std::array<MotorControlStrategyPtr, kControlModeCount> _controllers;
+        std::optional<Ticks16> _timeToNextCommutation;
         bool _running = false;
 
         esp::mcpwm::Timer::EventCallbacks _mcpwmTimerEventCallbacks;

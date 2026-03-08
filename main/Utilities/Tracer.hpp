@@ -6,11 +6,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include <cstdint>
+#include <chrono>
 #include <cstddef>
+#include <cstdint>
+
+using namespace std::chrono_literals;
 
 namespace bldc {
-
     enum class DebugCommand : uint8_t {
         BeginTrace = 0x0,
         EndTrace = 0x1,
@@ -33,16 +35,20 @@ namespace bldc {
 
     enum class TraceEvent : uint8_t {
         PhaseChangeRequested = 0,  // Motor::_currentStep about to change
-        McpwmOutputChanged   = 1,  // mcpwm_comparator_set_compare_value called
+        McpwmOutputChanged = 1,    // mcpwm_comparator_set_compare_value called
+        ProcessingCommands = 2,
+        StreamedData = 3,
+        ADCTaskLoopBegan = 4,
+        ADCTaskLoopEnded = 5
     };
-    static constexpr uint8_t kTraceEventCount = static_cast<uint8_t>(TraceEvent::McpwmOutputChanged) + 1;
+    static constexpr uint8_t kTraceEventCount = static_cast<uint8_t>(TraceEvent::ADCTaskLoopEnded) + 1;
 
     struct __attribute__((packed)) TraceSample {
         uint8_t timestampDelta;
         uint16_t phaseValue : 12;
         uint16_t neutralValue : 12;
-        MotorStep phase : 3;
-        ControlPhase controlMode : 3;
+        PhaseAngle phase : 3;
+        ControlMode controlMode : 3;
         uint8_t _padding : 2;
         uint8_t dutyCycle;
         uint8_t ticksToNextStep;
@@ -59,12 +65,12 @@ namespace bldc {
     // Log frame:      [D0 D0] len[2] text[len] CRC8        = variable
     // Header frame:   [E2 DC] len[2] payload[len] CRC8     = variable (sent once on BeginTrace)
     // Event frame:    [E1 E1] ts_us[4] idx[1] CRC8         =  8 bytes
-    static constexpr uint8_t kTraceMagic[] = { 0xa5, 0x5a };
-    static constexpr uint8_t kCommandMagic[] = { 0xc0, 0xc0 };
-    static constexpr uint8_t kResponseMagic[] = { 0xc1, 0xc1 };
-    static constexpr uint8_t kLogMagic[] = { 0xd0, 0xd0 };
-    static constexpr uint8_t kHeaderMagic[] = { 0xe2, 0xdc };
-    static constexpr uint8_t kEventMagic[] = { 0xe1, 0xe1 };
+    static constexpr uint8_t kTraceMagic[] = {0xa5, 0x5a};
+    static constexpr uint8_t kCommandMagic[] = {0xc0, 0xc0};
+    static constexpr uint8_t kResponseMagic[] = {0xc1, 0xc1};
+    static constexpr uint8_t kLogMagic[] = {0xd0, 0xd0};
+    static constexpr uint8_t kHeaderMagic[] = {0xe2, 0xdc};
+    static constexpr uint8_t kEventMagic[] = {0xe1, 0xe1};
 
     static constexpr size_t kTraceFrameMagicOffset = 0;
     static constexpr size_t kTraceFrameSampleOffset = 2;
@@ -96,15 +102,9 @@ namespace bldc {
     public:
         static Tracer* sharedTracer();
 
-        void tick();
-        void setADCValues(MotorStep motorStep, uint16_t value, uint16_t neutralValue);
-        void setControlMode(ControlPhase mode);
-        void setDutyCycle(float percentDutyCycle);
-        void setTicksToNextStep(uint16_t ticks);
-        void setCurrentRPM(uint32_t rpm);
-        void setTargetRPM(uint32_t rpm);
-        void setError(Error error);
-        void setValleyOffset(int16_t offsetUs);
+        void commitSample();
+
+        TraceSample* currentSample() { return &_current; }
 
         void sendEvent(TraceEvent event);
 
@@ -113,10 +113,6 @@ namespace bldc {
 
         static int _logVprintf(const char* fmt, va_list args);
         int _logVprintfShared(const char* fmt, va_list args);
-
-        void _commitSample();
-
-        TraceSample* _currentSample();
 
         void _usbTask();
         void _processUSBCommands();
@@ -129,8 +125,8 @@ namespace bldc {
 
         volatile bool _tracing = false;
 
-        uint64_t _lastTimestamp = 0;
-        uint64_t _startTimestamp = 0;
+        std::chrono::microseconds _lastTimestamp = 0us;
+        std::chrono::microseconds _startTimestamp = 0us;
         uint32_t _sampleCount = 0;
 
         struct LogFrame {
@@ -138,7 +134,7 @@ namespace bldc {
         };
 
         struct PendingEvent {
-            uint32_t deltaUs;
+            std::chrono::microseconds deltaTime;
             TraceEvent evt;
         };
 
@@ -157,4 +153,4 @@ namespace bldc {
 
         friend void _usbTask(void* userInfo);
     };
-}
+}  // namespace bldc

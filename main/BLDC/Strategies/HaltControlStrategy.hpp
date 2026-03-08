@@ -11,7 +11,7 @@
 #pragma once
 
 #include "BLDC/Motor.hpp"
-#include "BLDC/MotorControlStrategy.hpp"
+#include "BLDC/Strategies/MotorControlStrategy.hpp"
 #include "BLDC/Types.hpp"
 
 #include <array>
@@ -34,7 +34,7 @@ namespace bldc {
 
         virtual float dutyCycle() const override;
 
-        virtual std::optional<ControlPhase> nextControlPhase(ControlPhase currentControlPhase) const override;
+        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const override;
 
     private:
         static constexpr char _loggingTag[] = "bldc::HaltControlStrategy";

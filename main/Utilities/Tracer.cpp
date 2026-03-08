@@ -2,15 +2,17 @@
 
 #include "BLDC/MotorConfig.hpp"
 
+#include "Timer.hpp"
+
 #include "driver/usb_serial_jtag.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 #include <type_traits>
 
 using namespace bldc;
+using namespace esp;
 
 #define TRACER 1
 
@@ -31,24 +33,23 @@ namespace bldc {
 
     static constexpr size_t kUSBTransmitBufferSize = 1 << 14;
     static constexpr size_t kUSBReceiveBufferSize = 256;
-    static constexpr size_t kTraceFrameSize = 2 + sizeof(TraceSample) + 1; // 10 bytes
-    static constexpr size_t kCommandFrameSize = 8; // 2 magic + 1 cmd + 4 param + 1 crc
-    static constexpr size_t kResponseFrameSize = 4; // 2 magic + 1 resp + 1 crc
+    static constexpr size_t kTraceFrameSize = 2 + sizeof(TraceSample) + 1;  // 10 bytes
+    static constexpr size_t kCommandFrameSize = 8;                          // 2 magic + 1 cmd + 4 param + 1 crc
+    static constexpr size_t kResponseFrameSize = 4;                         // 2 magic + 1 resp + 1 crc
 
     static constexpr size_t kSampleBatchMaxFrameCount = 256;
     static constexpr size_t kSampleBatchBufferSize = kSampleBatchMaxFrameCount * kTraceFrameSize;
 
-    static constexpr const char* kEventNames[] = {
-        "PhaseChangeRequested",
-        "McpwmOutputChanged",
-    };
+    static constexpr const char* kEventNames[] = {"PhaseChangeRequested", "McpwmOutputChanged", "ProcessingCommands",
+                                                  "StreamedData",         "ADCTaskLoopBegan",   "ADCTaskLoopEnded"};
     static_assert(sizeof(kEventNames) / sizeof(kEventNames[0]) == static_cast<size_t>(kTraceEventCount), "kEventNames length must match kTraceEventCount");
+
     void _usbTask(void* arg) {
         Tracer* tracer = static_cast<Tracer*>(arg);
 
         tracer->_usbTask();
     }
-}
+}  // namespace bldc
 
 Tracer* Tracer::sharedTracer() {
     static Tracer tracer;
@@ -78,7 +79,8 @@ int Tracer::_logVprintfShared(const char* fmt, va_list args) {
 
     if (length <= 0) {
         return length;
-    } if (length > (int)kLogMaxPayload) {
+    }
+    if (length > (int)kLogMaxPayload) {
         length = kLogMaxPayload - 1;
         log.text[kLogMaxPayload - 1] = '\0';
     }
@@ -100,12 +102,12 @@ void Tracer::_usbTask() {
 
     esp_err_t err = usb_serial_jtag_driver_install(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(_loggingTag, "Failed to install USB Serial/JTAG driver: %s",
-                 esp_err_to_name(err));
+        ESP_LOGE(_loggingTag, "Failed to install USB Serial/JTAG driver: %s", esp_err_to_name(err));
         return;
     }
 
     while (true) {
+        //sendEvent(TraceEvent::ProcessingCommands);
         _processUSBCommands();
 
         if (_tracing) {
@@ -114,6 +116,8 @@ void Tracer::_usbTask() {
         } else {
             vTaskDelay(pdMS_TO_TICKS(10));
         }
+
+        //sendEvent(TraceEvent::StreamedData);
     }
 #endif
 }
@@ -122,7 +126,7 @@ void Tracer::_processUSBCommands() {
 #if defined(TRACER) && TRACER
     const int bytesRead = usb_serial_jtag_read_bytes(_receiveBuffer + _receiveBufferIndex, sizeof(_receiveBuffer) - _receiveBufferIndex, 0);
 
-    uint8_t *commandPointer = _receiveBuffer;
+    uint8_t* commandPointer = _receiveBuffer;
 
     if (bytesRead <= 0) {
         return;
@@ -149,7 +153,7 @@ void Tracer::_processUSBCommands() {
             continue;
         }
 
-        const DebugCommand command = static_cast<DebugCommand>(commandPointer[kCommandCommandOffset]); 
+        const DebugCommand command = static_cast<DebugCommand>(commandPointer[kCommandCommandOffset]);
         uint32_t parameter = 0;
         std::memcpy(&parameter, commandPointer + kCommandParameterOffset, 4);
         CommandResponse response = _handleCommand(command, parameter);
@@ -179,7 +183,7 @@ CommandResponse Tracer::_beginTrace() {
         return CommandResponse::InvalidState;
     }
 
-    _lastTimestamp = esp_timer_get_time();
+    _lastTimestamp = Timer::now();
     _sampleCount = 0;
 
     _traceSampleRingbuffer.clear();
@@ -237,12 +241,12 @@ void Tracer::_sendHeader() {
     //     name       null-terminated UTF-8
 
     uint8_t frame[512];
-    size_t  p = 2;
+    size_t p = 2;
 
     frame[p++] = kProtocolVersion;
     frame[p++] = static_cast<uint8_t>(sizeof(TraceSample));
-    frame[p++] = (kMotorDriveFrequency >>  0) & 0xFF;
-    frame[p++] = (kMotorDriveFrequency >>  8) & 0xFF;
+    frame[p++] = (kMotorDriveFrequency >> 0) & 0xFF;
+    frame[p++] = (kMotorDriveFrequency >> 8) & 0xFF;
     frame[p++] = (kMotorDriveFrequency >> 16) & 0xFF;
     frame[p++] = (kMotorDriveFrequency >> 24) & 0xFF;
     frame[p++] = kTraceEventCount;
@@ -250,7 +254,7 @@ void Tracer::_sendHeader() {
     for (uint8_t i = 0; i < kTraceEventCount; ++i) {
         frame[p++] = i;
         const char* name = kEventNames[i];
-        const size_t nameLen = strlen(name) + 1; // include null terminator
+        const size_t nameLen = strlen(name) + 1;  // include null terminator
         memcpy(frame + p, name, nameLen);
         p += nameLen;
     }
@@ -265,16 +269,18 @@ void Tracer::_sendHeader() {
 
     usb_serial_jtag_write_bytes((const char*)frame, frameLen, pdMS_TO_TICKS(5));
 
-    _startTimestamp = esp_timer_get_time();
+    _startTimestamp = Timer::now();
 #endif
 }
 
 void Tracer::sendEvent(TraceEvent evt) {
 #if defined(TRACER) && TRACER
-    if (!_tracing) { return; }
+    if (!_tracing) {
+        return;
+    }
 
-    const uint64_t timestamp = esp_timer_get_time();
-    const uint32_t deltaTime = static_cast<uint32_t>(timestamp - _startTimestamp);
+    const std::chrono::microseconds timestamp = Timer::now();
+    const std::chrono::microseconds deltaTime = timestamp - _startTimestamp;
 
     _eventRingbuffer.emplace(deltaTime, evt);
 #endif
@@ -307,12 +313,14 @@ void Tracer::_streamData() {
             break;
         }
 
+        uint32_t deltaTime = static_cast<uint32_t>(event->deltaTime.count());
+
         fillLocation[kEventFrameMagicOffset] = kEventMagic[0];
         fillLocation[kEventFrameMagicOffset + 1] = kEventMagic[1];
-        fillLocation[kEventFrameTsOffset] = (event->deltaUs >>  0) & 0xFF;
-        fillLocation[kEventFrameTsOffset + 1] = (event->deltaUs >>  8) & 0xFF;
-        fillLocation[kEventFrameTsOffset + 2] = (event->deltaUs >> 16) & 0xFF;
-        fillLocation[kEventFrameTsOffset + 3] = (event->deltaUs >> 24) & 0xFF;
+        fillLocation[kEventFrameTsOffset] = (deltaTime >> 0) & 0xFF;
+        fillLocation[kEventFrameTsOffset + 1] = (deltaTime >> 8) & 0xFF;
+        fillLocation[kEventFrameTsOffset + 2] = (deltaTime >> 16) & 0xFF;
+        fillLocation[kEventFrameTsOffset + 3] = (deltaTime >> 24) & 0xFF;
         fillLocation[kEventFrameIdxOffset] = static_cast<uint8_t>(event->evt);
         fillLocation[kEventFrameCRCOffset] = crc8_dallas(fillLocation + kEventFrameTsOffset, 5);
 
@@ -327,7 +335,7 @@ void Tracer::_streamData() {
             break;
         }
 
-        size_t logLength = strnlen(log->text, 512);
+        size_t logLength = strnlen(log->text, kLogMaxPayload);
 
         if (fillLocation - transmitBuffer + logLength + 4 > sizeof(transmitBuffer)) {
             break;
@@ -352,101 +360,18 @@ void Tracer::_streamData() {
 #endif
 }
 
-TraceSample* Tracer::_currentSample() {
+void Tracer::commitSample() {
+#if defined(TRACER) && TRACER
     if (!_tracing) {
-        return nullptr;
+        return;
     }
 
-    return &_current;
-}
+    const std::chrono::microseconds time = Timer::now();
+    const std::chrono::microseconds delta = time - _lastTimestamp;
+    _lastTimestamp = time;
+    _current.timestampDelta = static_cast<uint8_t>(delta.count());
 
-void Tracer::_commitSample() {
     _sampleCount++;
     _traceSampleRingbuffer.push(_current);
-}
-
-void Tracer::tick() {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    const uint64_t time = esp_timer_get_time();
-    const uint64_t delta = time - _lastTimestamp;
-    _lastTimestamp = time;
-    sample->timestampDelta = static_cast<uint8_t>(delta);
-
-    _commitSample();
 #endif
-}
-
-void Tracer::setADCValues(MotorStep motorStep, uint16_t value, uint16_t neutralValue) {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    sample->phase = motorStep;
-    sample->phaseValue = value;
-    sample->neutralValue = neutralValue;
-#endif
-}
-
-void Tracer::setControlMode(ControlPhase mode) {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    sample->controlMode = mode;
-#endif
-}
-
-void Tracer::setDutyCycle(float percentDutyCycle) {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    sample->dutyCycle = static_cast<uint8_t>(percentDutyCycle * 255.0f);
-#endif
-}
-
-void Tracer::setTicksToNextStep(uint16_t ticks) {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    sample->ticksToNextStep = static_cast<uint8_t>(std::min(static_cast<uint16_t>(255u), ticks));
-#endif
-}
-
-void Tracer::setValleyOffset(int16_t offsetUs) {
-#if defined(TRACER) && TRACER
-    TraceSample* sample = _currentSample();
-    if (sample == nullptr) {
-        return;
-    }
-
-    sample->valleyOffsetUs = offsetUs;
-#endif
-}
-
-void Tracer::setCurrentRPM(uint32_t rpm) {
-    // Available for future status streaming; no-op for now
-    (void)rpm;
-}
-
-void Tracer::setTargetRPM(uint32_t rpm) {
-    (void)rpm;
-}
-
-void Tracer::setError(Error error) {
-    (void)error;
 }

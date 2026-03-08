@@ -19,12 +19,12 @@
 
 using namespace bldc;
 using namespace esp;
-using namespace mcpwm;
+using namespace esp::mcpwm;
 
 McpwmContext::McpwmContext(const McpwmConfig& config, esp_err_t& err) {
     err = ESP_OK;
 
-    const TimerConfig timerConfig = {
+    const mcpwm::TimerConfig timerConfig = {
         .groupId = config._groupId, .frequency = kMcpwmFrequency, .period = kMcpwmPeriod, .countMode = MCPWM_TIMER_COUNT_MODE_UP_DOWN};
 
     _timer = ESP32::sharedESP32()->mcpwm().timer(timerConfig, err);
@@ -71,10 +71,7 @@ McpwmContext::McpwmContext(const McpwmConfig& config, esp_err_t& err) {
 }
 
 McpwmContext::McpwmContext(McpwmContext&& other)
-    : _timer(other._timer),
-      _operators(std::move(other._operators)),
-      _comparators(std::move(other._comparators)),
-      _generators(std::move(other._generators)) {}
+    : _timer(other._timer), _operators(std::move(other._operators)), _comparators(std::move(other._comparators)), _generators(std::move(other._generators)) {}
 
 McpwmContext& McpwmContext::operator=(McpwmContext&& other) {
     _timer = other._timer;
@@ -92,7 +89,7 @@ esp_err_t McpwmContext::start() {
         return err;
     }
 
-    _timer->start(Timer::StartCommand::NoStop, err);
+    _timer->start(mcpwm::Timer::StartCommand::NoStop, err);
     if (err != ESP_OK) {
         ESP_LOGE(_loggingTag, "Timer::start failed: %s", esp_err_to_name(err));
         return err;
@@ -111,7 +108,7 @@ esp_err_t McpwmContext::setDutyCycle(MotorPhase phase, uint32_t dutyCycle) {
 esp_err_t McpwmContext::setGpioValue(MotorPhase phase, bool value) {
     esp_err_t err = ESP_OK;
     _generators[static_cast<uint8_t>(phase)]->setLevel(value ? Level::High : Level::Low, true, err);
-//    _comparators[static_cast<uint8_t>(phase)]->setCompareValue(value ? kMaxDutyCycle : 0, err);
+    //    _comparators[static_cast<uint8_t>(phase)]->setCompareValue(value ? kMaxDutyCycle : 0, err);
     return err;
 }
 

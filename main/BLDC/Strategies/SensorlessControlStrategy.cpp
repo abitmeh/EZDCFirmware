@@ -8,15 +8,10 @@
  *
  */
 
-#include "BLDC/SensorlessControlStrategy.hpp"
-#include "BLDC/MotorConfig.hpp"
+#include "BLDC/Strategies/SensorlessControlStrategy.hpp"
+#include "BLDC/Strategies/SensorlessConfig.hpp"
 
-#include "ADC/Continuous.hpp"
-#include "ESP32.hpp"
-
-#include <bldc_snls_lib.h>
 #include <esp_log.h>
-#include <esp_timer.h>
 
 #include <ranges>
 
@@ -74,23 +69,23 @@ NextChange SensorlessControlStrategy::nextStepChange() {
         return NextChange();
     }
 
-    const uint16_t timeInCurrentStep = _motor->timeInCurrentStep();
-    const uint16_t expectedTimeInCurrentStep = _motor->expectedStepDuration();
-    const uint16_t zeroCrossBlankingTime = kZeroCrossBlankingPeriod * expectedTimeInCurrentStep;
+    const Ticks16 timeInCurrentStep = _motor->timeInCurrentStep();
+    const Ticks16 expectedTimeInCurrentStep = _motor->expectedStepDuration();
+    const Ticks16 zeroCrossBlankingTime = std::chrono::duration_cast<Ticks16>(kZeroCrossBlankingPeriod * expectedTimeInCurrentStep);
     if (timeInCurrentStep < zeroCrossBlankingTime) {
         return NextChange();
     }
 
-    const MotorStep currentStep = _motor->currentStep();
+    const PhaseAngle currentStep = _motor->currentStep();
     const bool nextStep = _motor->detectZeroCross();
-    
+
     if (!nextStep) {
         return NextChange();
     }
 
-    const uint16_t delay = timeInCurrentStep - 2 * kZeroCrossRepeatTime;
+    const Ticks16 delay = timeInCurrentStep - 2 * kZeroCrossRepeatTime;
 
-    return NextChange(NextStep(delay, static_cast<MotorStep>((static_cast<uint8_t>(currentStep) + (nextStep ? 1 : 0)) % 6)));
+    return NextChange(NextStep(delay, static_cast<PhaseAngle>((static_cast<uint8_t>(currentStep) + (nextStep ? 1 : 0)) % 6)));
 }
 
 float SensorlessControlStrategy::dutyCycle() const {
