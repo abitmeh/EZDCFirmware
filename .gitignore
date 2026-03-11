@@ -10,3 +10,4 @@ log/**
 **/__pycache__/**
 **/*.SVDat
 **/.vscode/*.json
+**/build-tests/

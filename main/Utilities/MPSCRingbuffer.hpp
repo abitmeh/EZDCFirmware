@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstddef>
 #include <new>
+#include <optional>
 
 namespace bldc {
     template <typename T, size_t E>
@@ -18,7 +19,7 @@ namespace bldc {
 
         void clear();
 
-        void push(const T& value);
+        bool push(const T& value);
         template <typename... Args>
         const T* emplace(Args&&... args);
         const T* peek() const;
@@ -27,6 +28,8 @@ namespace bldc {
     private:
         static constexpr size_t kIndexMask = kBufferSize - 1;
         static_assert((kBufferSize & kIndexMask) == 0, "Ringbuffer size must be a power of 2");
+
+        std::optional<size_t> _claimSlot();
 
         struct Entry {
             T data;
@@ -66,24 +69,39 @@ namespace bldc {
     }
 
     template <typename T, size_t E>
-    void MPSCRingbuffer<T, E>::push(const T& value) {
-        if (full()) {
-            return;
-        }
+    std::optional<size_t> MPSCRingbuffer<T, E>::_claimSlot() {
+        size_t writeIndex = _writeIndex.load(std::memory_order_relaxed);
+        do {
+            writeIndex = _writeIndex.load(std::memory_order_relaxed);
+            if (writeIndex - _readIndex.load(std::memory_order_acquire) >= kBufferSize) {
+                return std::nullopt;  // full
+            }
+        } while (!_writeIndex.compare_exchange_weak(writeIndex, writeIndex + 1, std::memory_order_release, std::memory_order_relaxed));
+        return writeIndex & kIndexMask;
+    }
 
-        const size_t slot = _writeIndex.fetch_add(1, std::memory_order_release) & kIndexMask;
+    template <typename T, size_t E>
+    bool MPSCRingbuffer<T, E>::push(const T& value) {
+        const std::optional<size_t> maybeSlot = _claimSlot();
+        if (!maybeSlot.has_value()) {
+            return false;
+        }
+        const size_t slot = maybeSlot.value();
+
         _buffer[slot].data = value;
         _buffer[slot].ready.store(true, std::memory_order_release);
+        return true;
     }
 
     template <typename T, size_t E>
     template <typename... Args>
     const T* MPSCRingbuffer<T, E>::emplace(Args&&... args) {
-        if (full()) {
+        const std::optional<size_t> maybeSlot = _claimSlot();
+        if (!maybeSlot.has_value()) {
             return nullptr;
         }
+        const size_t slot = maybeSlot.value();
 
-        const size_t slot = _writeIndex.fetch_add(1, std::memory_order_release) & kIndexMask;
         T* result = new (&_buffer[slot].data) T(std::forward<Args>(args)...);
         _buffer[slot].ready.store(true, std::memory_order_release);
 

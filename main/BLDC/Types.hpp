@@ -11,6 +11,7 @@
 #pragma once
 
 #include "BLDC/Config.hpp"
+#include "Utilities/fixed.hpp"
 #include "Utilities/rational.hpp"
 
 #include <chrono>

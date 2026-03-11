@@ -1,5 +1,7 @@
 #pragma once
 
+#include "pid_ctrl.h"
+
 namespace bldc {
     static constexpr float kPidKp = 0.0075f;
     static constexpr float kPidKi = 0.0f;

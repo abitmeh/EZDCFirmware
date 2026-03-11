@@ -5,5 +5,5 @@ dependencies:
     version: '>=6.0.0'
   espressif/pid_ctrl: '*'
   esp_pp_idf:
-    git: 'https://github.com/abitmeh/esp-pp-idf.git'
+    git: 'file:///home/tdavie/Documents/esp_pp_idf'
     version: main
