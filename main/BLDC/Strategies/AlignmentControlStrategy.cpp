@@ -22,11 +22,12 @@ static const size_t kStepCount = 10;
 
 AlignmentControlStrategy::AlignmentControlStrategy(MotorPtr& motor) : MotorControlStrategy(motor) {}
 
-void AlignmentControlStrategy::start(esp_err_t& err) {
+void AlignmentControlStrategy::start(ControlStrategyTransferableState&& state, esp_err_t& err) {
     ESP_LOGD(_loggingTag, "Starting AlignmentControlStrategy");
+    _state = std::move(state);
 }
 
-NextChange AlignmentControlStrategy::nextStepChange() {
+std::optional<Commutation> AlignmentControlStrategy::tick() {
     const Ticks32 currentTicks = _step * kAlignmentTime / kStepCount;
     _step++;
     const Ticks32 nextTicks = _step * kAlignmentTime / kStepCount;
@@ -34,14 +35,16 @@ NextChange AlignmentControlStrategy::nextStepChange() {
     const Ticks16 nextPhaseLength = static_cast<Ticks16>(nextTicks - currentTicks);
 
     const PhaseAngle motorAngle = static_cast<PhaseAngle>(std::min(static_cast<uint8_t>(PhaseAngle::Degrees300), static_cast<uint8_t>(_step)));
-    const NextChange nextChange(NextStep(_step < 10 ? nextPhaseLength : 0_tks, motorAngle));
-    return nextChange;
+
+    if (_step >= kStepCount && _delegate != nullptr) {
+        _delegate->controlStrategyDidComplete(*this);
+    }
+
+    MotorState nextState(motorAngle, dutyCycle());
+
+    return Commutation(_step < 10 ? nextPhaseLength : 0_tks, nextState);
 }
 
 float AlignmentControlStrategy::dutyCycle() const {
     return kAlignmentStartDutyCycle + static_cast<float>(_step) * (kAlignmentEndDutyCycle - kAlignmentStartDutyCycle) / static_cast<float>(kStepCount);
-}
-
-std::optional<ControlMode> AlignmentControlStrategy::nextControlMode(ControlMode currentControlMode) const {
-    return _step >= kStepCount ? std::optional<ControlMode>(Drag) : std::nullopt;
 }

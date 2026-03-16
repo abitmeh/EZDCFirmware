@@ -91,9 +91,9 @@ namespace bldc {
 
                 const uint8_t phase = motor->_phaseForChannel(data.channel);
 
-                motor->_rawADCValues[phase] =
-                    static_cast<uint16_t>(data.raw_data) + (phase != kMotorPhaseCount ? motor->_integerADCBiases[motor->_currentStep] : 0);
+                motor->_rawADCValues[phase] = static_cast<uint16_t>(data.raw_data);
             }
+            motor->_rawADCValues[motor->_currentMotorState.floatingPhase()] += motor->_integerADCBiases[motor->_currentMotorState.nearestPhaseAngle()];
         }
     }
 
@@ -108,19 +108,13 @@ namespace bldc {
             return InterruptResult::NoHighPriorityTaskWoken;
         }
 
-        const uint8_t currentPhase = static_cast<uint8_t>(motor->_highImpedencePhase);
-        const uint8_t motorAngle = static_cast<uint8_t>(motor->_currentStep);
-
-        if (motorAngle >= 6) {
-            return InterruptResult::NoHighPriorityTaskWoken;
-        }
-
-        assert(currentPhase < 3);
-        assert(motorAngle < 6);
+        const uint8_t floatingPhase = static_cast<uint8_t>(motor->_currentMotorState.floatingPhase());
+        const PhaseAngle motorAngle = motor->_currentMotorState.nearestPhaseAngle();
+        assert(floatingPhase < 3);
 
         static constexpr int16_t inverseAlpha = 5;
 
-        const int16_t floatingPhaseValue = motor->_rawADCValues[currentPhase] + motor->_integerADCBiases[motorAngle];
+        const int16_t floatingPhaseValue = motor->_rawADCValues[floatingPhase] + motor->_integerADCBiases[motorAngle];
         const int16_t vddValue = motor->_rawADCValues[kMotorPhaseCount];
         const int16_t neutralValue = vddValue / 2;
 
@@ -219,20 +213,12 @@ void Motor::start(uint32_t targetRPM) {
 
     setAllHighZ();
     _speed.targetRPM = targetRPM;
-    _nextStep = Degrees0;
-    _currentStep = Degrees0;
-    _highImpedencePhase = U;
 }
 
 void Motor::stop() {
     setAllHighZ();
     _speed.currentRPM = 0;
     _speed.targetRPM = 0;
-    _dutyCycle = 0;
-}
-
-bool Motor::isStalled() const {
-    return _speed.targetRPM != 0 && _speed.timeInCurrentStep > kStallPeriod;
 }
 
 void Motor::tick() {
@@ -273,7 +259,7 @@ void Motor::calculateSpeed() {
 }
 
 void Motor::commutateIfNecessary() {
-    if (_nextStep != _currentStep) {
+    if (_nextMotorState != _currentMotorState) {
         _commutate();
     }
 }
@@ -281,29 +267,32 @@ void Motor::commutateIfNecessary() {
 void Motor::_commutate() {
     _willCommutate();
 
-    if (_inPulseInjectionPhase) {
-        if (_nextStep < kPulseInjectionPhaseSetupOrder.size()) {
-            kPulseInjectionPhaseSetupOrder[_nextStep](_dutyCycle);
-        }
-    } else {
-        switch (_direction) {
-            case Direction::Clockwise:
-                if (_nextStep < kClockwiseSetupOrder.size()) {
-                    kClockwiseSetupOrder[_nextStep](_dutyCycle);
-                }
-                break;
-            case Direction::Anticlockwise:
-                if (_nextStep < kAnticlockwiseSetupOrder.size()) {
-                    kAnticlockwiseSetupOrder[_nextStep](_dutyCycle);
-                }
-                break;
-        }
-    }
+    _configureMotorState(_nextMotorState);
+
     //Tracer::sharedTracer()->sendEvent(TraceEvent::PhaseChangeRequested);
-    _currentStep = _nextStep;
+    _currentMotorState = _nextMotorState;
     _phaseChangeComplete = true;
     _stepDurations.push_front(_speed.timeInCurrentStep);
     _speed.timeInCurrentStep = 0_tks;
+}
+
+void Motor::_configureMotorState(const MotorState& state) {
+    for (size_t i = 0; i < 3; ++i) {
+        const MotorPhase phase = static_cast<MotorPhase>(i);
+        switch (state._phaseStates[i]) {
+            case PhaseState::Low:
+                _setPhaseLow(phase, state._dutyCycles[i] * kMaxDutyCycle);
+                break;
+            case PhaseState::High:
+                _setPhaseHigh(phase, state._dutyCycles[i] * kMaxDutyCycle);
+                break;
+            case PhaseState::HighZ:
+                _setPhaseHighZ(phase);
+                break;
+            default:
+                std::unreachable();
+        }
+    }
 }
 
 void Motor::_setPhaseHigh(MotorPhase phase, uint32_t dutyCycle) {
@@ -325,48 +314,49 @@ void Motor::setAllHighZ() {
     _setPhaseHighZ(U);
     _setPhaseHighZ(V);
     _setPhaseHighZ(W);
+    _currentMotorState = MotorState({PhaseState::HighZ, PhaseState::HighZ, PhaseState::HighZ}, 0);
 }
 
 void Motor::_setWHighVLow(uint32_t dutyCycle) {
     _setPhaseHigh(W, dutyCycle);
     _setPhaseLow(V, dutyCycle);
     _setPhaseHighZ(U);
-    _highImpedencePhase = U;
+    _currentMotorState = MotorState({PhaseState::HighZ, PhaseState::Low, PhaseState::High}, dutyCycle);
 }
 
 void Motor::_setWHighULow(uint32_t dutyCycle) {
     _setPhaseHigh(W, dutyCycle);
     _setPhaseLow(U, dutyCycle);
     _setPhaseHighZ(V);
-    _highImpedencePhase = V;
+    _currentMotorState = MotorState({PhaseState::Low, PhaseState::HighZ, PhaseState::High}, dutyCycle);
 }
 
 void Motor::_setVHighULow(uint32_t dutyCycle) {
     _setPhaseHigh(V, dutyCycle);
     _setPhaseLow(U, dutyCycle);
     _setPhaseHighZ(W);
-    _highImpedencePhase = W;
+    _currentMotorState = MotorState({PhaseState::Low, PhaseState::High, PhaseState::HighZ}, dutyCycle);
 }
 
 void Motor::_setVHighWLow(uint32_t dutyCycle) {
     _setPhaseHigh(V, dutyCycle);
     _setPhaseLow(W, dutyCycle);
     _setPhaseHighZ(U);
-    _highImpedencePhase = U;
+    _currentMotorState = MotorState({PhaseState::HighZ, PhaseState::High, PhaseState::Low}, dutyCycle);
 }
 
 void Motor::_setUHighWLow(uint32_t dutyCycle) {
     _setPhaseHigh(U, dutyCycle);
     _setPhaseLow(W, dutyCycle);
     _setPhaseHighZ(V);
-    _highImpedencePhase = V;
+    _currentMotorState = MotorState({PhaseState::High, PhaseState::HighZ, PhaseState::Low}, dutyCycle);
 }
 
 void Motor::_setUHighVLow(uint32_t dutyCycle) {
     _setPhaseHigh(U, dutyCycle);
     _setPhaseLow(V, dutyCycle);
     _setPhaseHighZ(W);
-    _highImpedencePhase = W;
+    _currentMotorState = MotorState({PhaseState::High, PhaseState::Low, PhaseState::HighZ}, dutyCycle);
 }
 
 void Motor::_setUVHighWLow(uint32_t dutyCycle) {
@@ -413,13 +403,11 @@ void Motor::_setADCValues(uint16_t floatingPhaseValue, uint16_t neutralValue) {
         return;
     }
 
-    static constexpr uint16_t kStartTimeNumerator = 5;
-    static constexpr uint16_t kStartTimeDenominator = 20;
-    static constexpr uint16_t kEndTimeNumerator = 17;
-    static constexpr uint16_t kEndTimeDenominator = 20;
+    const Ticks16 relativeZeroCrossBlankingPeriod = std::chrono::duration_cast<Ticks16>(kZeroCrossBlankingPeriod * _expectedStepDuration);
+    const Ticks16 absoluteZeroCrossBlankingPeriod = std::chrono::duration_cast<Ticks16>(1000us);
+    const Ticks16 zeroCrossBlankingTime = std::max(relativeZeroCrossBlankingPeriod, absoluteZeroCrossBlankingPeriod);
 
-    if (timeInCurrentStep() * kStartTimeDenominator < (kStartTimeNumerator * _expectedStepDuration) ||
-        timeInCurrentStep() * kEndTimeDenominator > (kEndTimeNumerator * _expectedStepDuration)) {
+    if (timeInCurrentStep() < zeroCrossBlankingTime) {
         return;
     }
 
@@ -438,31 +426,26 @@ void Motor::_willCommutate() {
     const float observedAverageFloatingPhase = static_cast<float>(_observedTotalFloatingPhaseThisCommutation) / observationCount;
     const float observedBias = observedAverageNeutral - observedAverageFloatingPhase;
     static const float alpha = 0.1f;
-    if (_currentStep < 6) {
-        _adcBiases[_currentStep] += alpha * observedBias;
-        _integerADCBiases[_currentStep] = static_cast<int16_t>(_adcBiases[_currentStep]);
-    }
+    const PhaseAngle phaseAngle = _currentMotorState.nearestPhaseAngle();
+    _adcBiases[phaseAngle] += alpha * observedBias;
+    _integerADCBiases[phaseAngle] = static_cast<int16_t>(_adcBiases[phaseAngle]);
     _numberOfObservedValuesThisCommutation = 0;
     _observedTotalFloatingPhaseThisCommutation = 0;
     _observedTotalNeutralThisCommutation = 0;
+
+    _ticksInCrossedState = 0_tks;
+    _startedBelow = _floatingPhaseValue < _neutralValue;
 }
 
 bool Motor::detectZeroCross() {
-    if (_detectionStep != _currentStep) {
-        _detectionStep = _currentStep;
-        _ticksInCrossedState = 0_tks;
-        _hasBeenUncrossed = false;
-        _expectingCrossUpwards = _detectionStep == Degrees0 || _detectionStep == Degrees120 || _detectionStep == Degrees240;
-    }
+    const bool isBelow = _floatingPhaseValue < _neutralValue;
 
-    bool isBelow = _floatingPhaseValue < _neutralValue;
-    bool isCrossed = isBelow != _expectingCrossUpwards;
-    if (isCrossed && _hasBeenUncrossed) {
+    bool isCrossed = _startedBelow != isBelow;
+    if (isCrossed) {
         _ticksInCrossedState++;
     } else if (_ticksInCrossedState > 0_tks) {
         _ticksInCrossedState = 0_tks;
     }
-    _hasBeenUncrossed |= !isCrossed;
 
     if (_ticksInCrossedState >= kZeroCrossRepeatTime) {
         return true;
@@ -483,7 +466,7 @@ MotorPhase Motor::_phaseForChannel(adc_channel_t channel) {
 }
 
 void Motor::writeSample(TraceSample* sample) {
-    sample->phase = _currentStep;
+    sample->phase = _currentMotorState.nearestPhaseAngle();
     sample->phaseValue = _floatingPhaseValue;
     sample->neutralValue = _neutralValue;
     sample->valleyOffsetUs = static_cast<std::chrono::microseconds>(_offset).count();

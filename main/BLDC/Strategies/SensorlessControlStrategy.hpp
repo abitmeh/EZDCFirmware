@@ -31,12 +31,12 @@ namespace bldc {
     public:
         SensorlessControlStrategy(MotorPtr& motor, esp_err_t& err);
 
-        virtual void start(esp_err_t& err) override;
-        virtual void stop(esp_err_t& err) override;
+        virtual void start(ControlStrategyTransferableState&& state, esp_err_t& err) override;
+        virtual ControlStrategyTransferableState stop(esp_err_t& err) override;
 
-        virtual NextChange nextStepChange() override;
+        virtual std::optional<Commutation> tick() override;
 
-        virtual float dutyCycle() const override;
+        float dutyCycle() const;
 
         void setPIDParameters(const pid_ctrl_parameter_t& parameters, esp_err_t& err);
 

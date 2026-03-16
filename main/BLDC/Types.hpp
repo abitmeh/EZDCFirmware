@@ -17,6 +17,7 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
+#include <tuple>
 
 namespace bldc {
     enum Direction : uint8_t {
@@ -75,6 +76,46 @@ namespace bldc {
 
     static constexpr uint8_t kMotorPhaseCount = static_cast<uint8_t>(MotorPhase::W) + 1;
 
+    enum class PhaseState : uint8_t {
+        HighZ,
+        Low,
+        High
+    };
+
+    struct MotorState {
+        MotorState() {}
+
+        MotorState(PhaseAngle phaseAngle, float dutyCycle);
+        MotorState(const std::array<PhaseState, 3>& phaseStates, float dutyCycle);
+
+        // Temporary methods while Motor still has stuff in it that's related only to trapezoidal drive.
+        PhaseAngle nearestPhaseAngle() const;
+
+        MotorPhase floatingPhase() const;
+        MotorPhase lowPhase() const;
+        MotorPhase highPhase() const;
+
+        std::array<PhaseState, 3> _phaseStates;
+        std::array<float, 3> _dutyCycles;
+    };
+
+    bool operator==(const MotorState& a, const MotorState& b);
+    bool operator!=(const MotorState& a, const MotorState& b);
+}  // namespace bldc
+
+template <>
+struct std::hash<bldc::MotorState> {
+    std::size_t operator()(const bldc::MotorState& s) {
+        size_t hash = 0;
+        for (size_t i = 0; i < 3; ++i) {
+            hash ^= std::hash<uint8_t>()(static_cast<uint8_t>(s._phaseStates[i]));
+            hash ^= std::hash<float>()(s._dutyCycles[i]);
+        }
+        return hash;
+    }
+};
+
+namespace bldc {
     using Ticks16 = std::chrono::duration<uint16_t, std::ratio<1, kMotorDriveFrequency>>;
     using Ticks32 = std::chrono::duration<uint32_t, std::ratio<1, kMotorDriveFrequency>>;
     using Ticksf = std::chrono::duration<float, std::ratio<1, kMotorDriveFrequency>>;
@@ -112,4 +153,6 @@ namespace bldc {
     constexpr rational<uint32_t> operator""_pc(unsigned long long x) {
         return static_cast<uint32_t>(x) * percent;
     }
+
+    using Commutation = std::pair<Ticks16, MotorState>;
 }  // namespace bldc

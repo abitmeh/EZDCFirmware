@@ -18,20 +18,19 @@ using namespace bldc;
 
 HaltControlStrategy::HaltControlStrategy(MotorPtr& motor) : MotorControlStrategy(motor) {}
 
-void HaltControlStrategy::start(esp_err_t& err) {
+void HaltControlStrategy::start(ControlStrategyTransferableState&& state, esp_err_t& err) {
     ESP_LOGD(_loggingTag, "Starting HaltControlStrategy");
+    _state = std::move(state);
 }
 
-NextChange HaltControlStrategy::nextStepChange() {
+std::optional<Commutation> HaltControlStrategy::tick() {
     _motor->setTargetRPM(0);
     _motor->setAllHighZ();
-    return NextChange();
+    _motor->stop();
+    _state._currentStep = Degrees0;
+    return std::nullopt;
 }
 
 float HaltControlStrategy::dutyCycle() const {
     return 0.0f;
-}
-
-std::optional<ControlMode> HaltControlStrategy::nextControlMode(ControlMode controlMode) const {
-    return controlMode == Stopped ? std::nullopt : std::optional<ControlMode>(ControlMode::Stopped);
 }

@@ -77,13 +77,13 @@ namespace bldc {
 
         void setAllHighZ();
 
-        Direction direction() const { return _direction; }
+        uint32_t dutyCycle() const { return _currentMotorState._dutyCycles[_currentMotorState.lowPhase()]; }
 
-        void setDirection(Direction direction) { _direction = direction; }
-
-        uint32_t dutyCycle() const { return _dutyCycle; }
-
-        void setDutyCycle(uint32_t dutyCycle) { _dutyCycle = dutyCycle; }
+        void setDutyCycle(uint32_t dutyCycle) {
+            MotorPhase lowPhase = _currentMotorState.lowPhase();
+            _enableSwitchContext.setDutyCycle(lowPhase, dutyCycle);
+            _currentMotorState._dutyCycles[lowPhase] = dutyCycle;
+        }
 
         uint32_t currentRPM() { return _speed.currentRPM; }
 
@@ -95,25 +95,21 @@ namespace bldc {
 
         bool isPhaseChangeComplete() const { return _phaseChangeComplete; }
 
-        PhaseAngle currentStep() const { return _currentStep; }
-
         Ticks16 timeInCurrentStep() const { return _speed.timeInCurrentStep; }
 
         Ticks16 expectedStepDuration() const { return _expectedStepDuration; }
 
-        void setNextStep(PhaseAngle step) { _nextStep = step; }
+        void setNextMotorState(MotorState motorState) { _nextMotorState = motorState; }
 
         void setInPulseInjectionPhase(bool pulseInjection) { _inPulseInjectionPhase = pulseInjection; }
 
-        MotorPhase highImpedencePhase() const { return _highImpedencePhase; }
+        MotorPhase highImpedencePhase() const { return _currentMotorState.floatingPhase(); }
 
         void tick();
         void calculateSpeed();
         void commutateIfNecessary();
 
         bool detectZeroCross();
-
-        void setControlMode(ControlMode ControlMode) { _ControlMode = ControlMode; }
 
         void enableADCBiasLearning(bool enable) { _adcBiasLearning = enable; }
 
@@ -140,41 +136,24 @@ namespace bldc {
         void _setVWHighULow(uint32_t dutyCycle);
         void _setUHighVWLow(uint32_t dutyCycle);
 
+        void _configureMotorState(const MotorState& state);
+
         void _setADCValues(uint16_t floatingPhaseValue, uint16_t neutralValue);
         void _willCommutate();
 
         MotorPhase _phaseForChannel(adc_channel_t channel);
 
-        using PhaseSetupFunction = std::function<void(uint32_t dutyCycle)>;
-        using PhaseSetupOrder = std::array<PhaseSetupFunction, 6>;
-        PhaseSetupOrder kPulseInjectionPhaseSetupOrder{
-            std::bind(&Motor::_setUVHighWLow, this, std::placeholders::_1), std::bind(&Motor::_setWHighUVLow, this, std::placeholders::_1),
-            std::bind(&Motor::_setUWHighVLow, this, std::placeholders::_1), std::bind(&Motor::_setVHighUWLow, this, std::placeholders::_1),
-            std::bind(&Motor::_setVWHighULow, this, std::placeholders::_1), std::bind(&Motor::_setUHighVWLow, this, std::placeholders::_1)};
-        PhaseSetupOrder kClockwiseSetupOrder{
-            std::bind(&Motor::_setWHighVLow, this, std::placeholders::_1), std::bind(&Motor::_setWHighULow, this, std::placeholders::_1),
-            std::bind(&Motor::_setVHighULow, this, std::placeholders::_1), std::bind(&Motor::_setVHighWLow, this, std::placeholders::_1),
-            std::bind(&Motor::_setUHighWLow, this, std::placeholders::_1), std::bind(&Motor::_setUHighVLow, this, std::placeholders::_1)};
-        PhaseSetupOrder kAnticlockwiseSetupOrder{
-            std::bind(&Motor::_setUHighVLow, this, std::placeholders::_1), std::bind(&Motor::_setUHighWLow, this, std::placeholders::_1),
-            std::bind(&Motor::_setVHighWLow, this, std::placeholders::_1), std::bind(&Motor::_setVHighULow, this, std::placeholders::_1),
-            std::bind(&Motor::_setWHighULow, this, std::placeholders::_1), std::bind(&Motor::_setWHighVLow, this, std::placeholders::_1)};
-
         McpwmContext _inputSwitchContext;
         McpwmContext _enableSwitchContext;
         esp::mcpwm::GPIOFaultPtr _faultHandler;
 
-        Direction _direction = Clockwise;
-        PhaseAngle _nextStep = Degrees0;
-        PhaseAngle _currentStep = Degrees0;
+        MotorState _currentMotorState;
+        MotorState _nextMotorState;
         std::deque<Ticks16> _stepDurations;
         Ticks16 _expectedStepDuration{static_cast<uint16_t>(0)};
-        MotorPhase _highImpedencePhase = U;
         bool _phaseChangeComplete = true;
-        uint16_t _dutyCycle = 0;
         Speed _speed;
         bool _inPulseInjectionPhase = false;
-        ControlMode _ControlMode = PulseInjection;
         std::chrono::microseconds _offset;
 
         esp::adc::ADCContinuousPtr _adc = nullptr;
@@ -197,11 +176,7 @@ namespace bldc {
 
         // Zero crossing detection data
         Ticks16 _ticksInCrossedState{0};
-        bool _hasBeenUncrossed = false;
-        bool _expectingCrossUpwards = false;
-        PhaseAngle _detectionStep = Degrees0;
-
-        static constexpr Ticks16 kStallPeriod{15'000};
+        bool _startedBelow = false;
 
         static constexpr char _loggingTag[] = "bldc::Motor";
 

@@ -28,13 +28,11 @@ namespace bldc {
     public:
         HaltControlStrategy(MotorPtr& motor);
 
-        virtual void start(esp_err_t&) override;
+        virtual void start(ControlStrategyTransferableState&& state, esp_err_t&) override;
 
-        virtual NextChange nextStepChange() override;
+        virtual std::optional<Commutation> tick() override;
 
-        virtual float dutyCycle() const override;
-
-        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const override;
+        float dutyCycle() const;
 
     private:
         static constexpr char _loggingTag[] = "bldc::HaltControlStrategy";

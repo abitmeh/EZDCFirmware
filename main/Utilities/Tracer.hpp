@@ -39,7 +39,9 @@ namespace bldc {
         ProcessingCommands = 2,
         StreamedData = 3,
         ADCTaskLoopBegan = 4,
-        ADCTaskLoopEnded = 5
+        ADCTaskLoopEnded = 5,
+        StartEnded = 6,
+        DragEnded = 7,
     };
     static constexpr uint8_t kTraceEventCount = static_cast<uint8_t>(TraceEvent::ADCTaskLoopEnded) + 1;
 
@@ -48,8 +50,7 @@ namespace bldc {
         uint16_t phaseValue : 12;
         uint16_t neutralValue : 12;
         PhaseAngle phase : 3;
-        ControlMode controlMode : 3;
-        uint8_t _padding : 2;
+        uint8_t controlMode : 5;
         uint8_t dutyCycle;
         uint8_t ticksToNextStep;
         int16_t valleyOffsetUs;

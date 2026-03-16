@@ -10,6 +10,7 @@
 
 #include "BLDC/Strategies/SensorlessConfig.hpp"
 #include "BLDC/Strategies/SensorlessControlStrategy.hpp"
+#include "Utilities/Tracer.hpp"
 
 #include <esp_log.h>
 
@@ -29,8 +30,10 @@ SensorlessControlStrategy::SensorlessControlStrategy(MotorPtr& motor, esp_err_t&
     }
 }
 
-void SensorlessControlStrategy::start(esp_err_t& err) {
+void SensorlessControlStrategy::start(ControlStrategyTransferableState&& state, esp_err_t& err) {
     ESP_LOGD(_loggingTag, "Starting SensorlessControlStrategy");
+
+    _state = std::move(state);
 
     _motor->enableADCBiasLearning(true);
 
@@ -58,40 +61,57 @@ void SensorlessControlStrategy::start(esp_err_t& err) {
         ESP_LOGE(_loggingTag, "pid_compute failed: %s", esp_err_to_name(err));
         return;
     }
+
+    Tracer::sharedTracer()->sendEvent(TraceEvent::StartEnded);
 }
 
-void SensorlessControlStrategy::stop(esp_err_t& err) {
+ControlStrategyTransferableState SensorlessControlStrategy::stop(esp_err_t& err) {
     _motor->enableADCBiasLearning(false);
+
+    return _state;
 }
 
-NextChange SensorlessControlStrategy::nextStepChange() {
+std::optional<Commutation> SensorlessControlStrategy::tick() {
     if (!_motor->isPhaseChangeComplete()) {
-        return NextChange();
+        return std::nullopt;
     }
 
     const Ticks16 timeInCurrentStep = _motor->timeInCurrentStep();
     const Ticks16 expectedTimeInCurrentStep = _motor->expectedStepDuration();
-    const Ticks16 zeroCrossBlankingTime = std::chrono::duration_cast<Ticks16>(kZeroCrossBlankingPeriod * expectedTimeInCurrentStep);
+    const Ticks16 relativeZeroCrossBlankingPeriod = std::chrono::duration_cast<Ticks16>(kZeroCrossBlankingPeriod * expectedTimeInCurrentStep);
+    const Ticks16 absoluteZeroCrossBlankingPeriod = std::chrono::duration_cast<Ticks16>(1000us);
+    const Ticks16 zeroCrossBlankingTime = std::max(relativeZeroCrossBlankingPeriod, absoluteZeroCrossBlankingPeriod);
     if (timeInCurrentStep < zeroCrossBlankingTime) {
-        return NextChange();
+        return std::nullopt;
     }
 
-    const PhaseAngle currentStep = _motor->currentStep();
+    if (timeInCurrentStep > kStallPeriod && _delegate != nullptr) {
+        _delegate->controlStrategyMotorDidStall(*this);
+    }
+
+    const PhaseAngle currentStep = _state._currentStep;
     const bool nextStep = _motor->detectZeroCross();
 
     if (!nextStep) {
-        return NextChange();
+        return std::nullopt;
     }
 
     const Ticks16 delay = timeInCurrentStep - 2 * kZeroCrossRepeatTime;
 
-    return NextChange(NextStep(delay, static_cast<PhaseAngle>((static_cast<uint8_t>(currentStep) + (nextStep ? 1 : 0)) % 6)));
+    MotorState nextState(static_cast<PhaseAngle>((static_cast<uint8_t>(currentStep) + (nextStep ? 1 : 0)) % 6), dutyCycle());
+    return Commutation(delay, nextState);
 }
 
 float SensorlessControlStrategy::dutyCycle() const {
     float duty = 0;
-    float a = _motor->targetRPM() - _motor->currentRPM();
-    return pid_compute(_pid, a, &duty);
+    float a = static_cast<float>(_motor->targetRPM()) - static_cast<float>(_motor->currentRPM());
+    esp_err_t err = pid_compute(_pid, static_cast<float>(a), &duty);
+    if (err != ESP_OK) {
+        ESP_LOGE(_loggingTag, "pid_compute failed: %s", esp_err_to_name(err));
+        return 0.0f;
+    }
+
+    return duty;
 }
 
 void SensorlessControlStrategy::setPIDParameters(const pid_ctrl_parameter_t& parameters, esp_err_t& err) {

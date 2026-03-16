@@ -30,14 +30,12 @@ namespace bldc {
     public:
         DragControlStrategy(MotorPtr& motor, esp_err_t& err);
 
-        virtual void start(esp_err_t&) override;
-        virtual void stop(esp_err_t&) override;
+        virtual void start(ControlStrategyTransferableState&&, esp_err_t&) override;
+        virtual ControlStrategyTransferableState stop(esp_err_t&) override;
 
-        virtual NextChange nextStepChange() override;
+        virtual std::optional<Commutation> tick() override;
 
-        virtual float dutyCycle() const override;
-
-        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const override;
+        float dutyCycle() const;
 
     private:
         Ticks32 _durationInNextPhase();

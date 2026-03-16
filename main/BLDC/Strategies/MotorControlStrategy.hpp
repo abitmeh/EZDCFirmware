@@ -19,26 +19,36 @@ namespace bldc {
     class MotorControlStrategy;
     using MotorControlStrategyPtr = std::shared_ptr<MotorControlStrategy>;
 
-    using NextStep = std::pair<Ticks16, PhaseAngle>;
+    class ControlStrategyDelegate {
+    public:
+        virtual void controlStrategyMotorDidStall(const MotorControlStrategy& controlStrategy) = 0;
+        virtual void controlStrategyDidComplete(const MotorControlStrategy& controlStrategy) = 0;
+    };
 
-    using NextChange = std::optional<NextStep>;
+    struct ControlStrategyTransferableState {
+        PhaseAngle _currentStep = PhaseAngle::Degrees0;
+    };
 
     class MotorControlStrategy {
     public:
         MotorControlStrategy(MotorPtr& motor) : _motor(motor) {}
 
-        virtual void start(esp_err_t&) {}
+        virtual void start(ControlStrategyTransferableState&& state, esp_err_t&) { _state = std::move(state); }
 
-        virtual void stop(esp_err_t&) {}
+        virtual ControlStrategyTransferableState stop(esp_err_t&) { return _state; }
 
-        virtual NextChange nextStepChange() = 0;
+        virtual std::optional<Commutation> tick() = 0;
 
-        virtual float dutyCycle() const = 0;
+        ControlStrategyDelegate* delegate() { return _delegate; }
 
-        virtual std::optional<ControlMode> nextControlMode(ControlMode currentControlMode) const { return std::optional<ControlMode>(); }
+        void setDelegate(ControlStrategyDelegate* delegate) { _delegate = delegate; }
 
     protected:
         MotorPtr _motor;
+
+        ControlStrategyDelegate* _delegate;
+
+        ControlStrategyTransferableState _state;
 
     private:
         static constexpr char _loggingTag[] = "bldc::MotorControlStrategy";
